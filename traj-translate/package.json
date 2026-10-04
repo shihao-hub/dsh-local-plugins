@@ -1,0 +1,28 @@
+{
+  "name": "@local/traj-translate-v4",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "在轨迹记录检查器中新增「翻译」标签：AI 将「原始内容」翻译为简体中文，结构不变、无上下文，技术内容保留英文。",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./host-v4.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "host-v4.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
