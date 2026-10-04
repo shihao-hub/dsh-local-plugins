@@ -1,0 +1,28 @@
+{
+  "name": "@local/mod-renamer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Renames the Plugins label to 模组 (mods) across the sidebar and the plugins settings page.",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

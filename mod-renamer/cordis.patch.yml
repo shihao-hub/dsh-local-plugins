@@ -1,0 +1,3 @@
+- insert:
+    - id: mod-renamer
+      name: '@local/mod-renamer'
