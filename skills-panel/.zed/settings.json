@@ -1,0 +1,29 @@
+{
+  "file_scan_exclusions": [
+    "**/.git/**",
+  ],
+  "languages": {
+    // TS/TSX/JS：vtsls 跳转
+    "TypeScript": { "enable_language_server": true, "language_servers": ["vtsls"] },
+    "TSX": { "enable_language_server": true, "language_servers": ["vtsls"] },
+    "JavaScript": { "enable_language_server": true, "language_servers": ["vtsls"] },
+    // HTML/CSS：Zed 内置服务器，仅零星文件，不开
+    "HTML": { "enable_language_server": true },
+    "CSS": { "enable_language_server": true },
+  },
+  "lsp": {
+    // vtsls：限堆防膨胀（typescript_projects）；禁自动下载 @types（原 go_projects，
+    // 其 JS 文件无 package.json/node_modules）
+    "vtsls": {
+      "settings": {
+        "typescript": {
+          "tsserver": { "maxTsServerMemory": 2048 }
+        },
+        "javascript": {
+          "tsserver": { "maxTsServerMemory": 2048 },
+          "disableAutomaticTypeAcquisition": true
+        }
+      }
+    },
+  }
+}

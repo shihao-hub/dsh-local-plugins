@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>技能面板 · 分组改造设计稿</title>
+<style>
+  /* ---- 设计稿外壳（非产品界面）---- */
+  :root {
+    --paper: #0d0f13;
+    --paper-2: #12151b;
+    --rule: #232833;
+    --ink: #e8ebf1;
+    --ink-2: #9aa4b6;
+    --ink-3: #6a7488;
+    --accent: #7fb2ff;
+
+    /* DSH 产品 token（取自现有面板，保持一致） */
+    --dsw-bg-base: #1a1a1a;
+    --dsw-bg-layer-2: #262626;
+    --dsw-border-l2: #3a3a3a;
+    --dsw-label-primary: #ececec;
+    --dsw-label-secondary: #a8a8a8;
+    --dsw-label-tertiary: #7d7d7d;
+    --dsw-label-caption: #5f5f5f;
+    --dsw-hover: rgba(255, 255, 255, .06);
+    --dsw-brand: #4d8dff;
+    --dsw-radius-sm: 4px;
+    --dsw-radius-md: 6px;
+    --dsw-radius-xl: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 14px/1.6 "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 48px 40px 96px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .doc { max-width: 1480px; margin: 0 auto; }
+
+  /* 文档头部 */
+  .doc-head { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 40px; align-items: end; padding-bottom: 22px; border-bottom: 1px solid var(--rule); }
+  .doc-kicker { color: var(--ink-3); font-size: 12px; letter-spacing: .08em; }
+  .doc-title { margin: 8px 0 0; font-size: 40px; line-height: 1.15; font-weight: 650; letter-spacing: -.015em; }
+  .doc-title em { font-style: normal; color: var(--accent); }
+  .doc-sub { margin: 14px 0 0; color: var(--ink-2); max-width: 60ch; }
+  .facts { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; font-size: 13px; }
+  .facts dt { color: var(--ink-3); }
+  .facts dd { margin: 0; color: var(--ink); }
+  .facts code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--ink-2); }
+
+  /* 方案网格 */
+  .schemes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 38px 34px; margin-top: 44px; }
+  @media (max-width: 1180px) { .schemes { grid-template-columns: minmax(0, 1fr); } }
+  .scheme { display: flex; flex-direction: column; min-width: 0; }
+  .scheme-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+  .scheme-tag { font: 600 12px/1 ui-monospace, Consolas, monospace; color: var(--paper); background: var(--ink-2); border-radius: 4px; padding: 5px 7px 4px; }
+  .scheme.is-pick .scheme-tag { background: var(--accent); }
+  .scheme-name { font-size: 16px; font-weight: 620; margin: 0; }
+  .scheme-flag { font-size: 11px; color: var(--accent); border: 1px solid rgba(127, 178, 255, .45); border-radius: 999px; padding: 1px 8px; }
+  .scheme-note { margin: 0 0 14px; color: var(--ink-2); font-size: 13px; min-height: 62px; }
+  .scheme-note b { color: var(--ink); font-weight: 600; }
+  .scheme.is-pick .scheme-note b { color: var(--accent); }
+
+  /* ---- 面板外壳（模拟产品内的技能面板）---- */
+  .phone {
+    position: relative;
+    height: 660px;
+    background: var(--dsw-bg-base);
+    border: 1px solid #2b2b2b;
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    font-size: 13px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+  }
+  .phone::before {
+    /* 左侧栏的存在感：只暗示，不喧宾夺主 */
+    content: "";
+    position: absolute; inset: 0 auto 0 0; width: 22px;
+    background: #151515; border-right: 1px solid #242424;
+  }
+  .phone > * { position: relative; z-index: 1; margin-left: 22px; }
+  .phone.tight { height: 660px; }
+
+  /* 面板头 */
+  .pn-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 14px 20px 10px; }
+  .pn-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--dsw-label-primary); }
+  .pn-count { flex: none; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--dsw-bg-layer-2); color: var(--dsw-label-tertiary); font-size: 12px; line-height: 20px; text-align: center; }
+  .pn-spacer { flex: 1; }
+  .pn-icon-btn { flex: none; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: .5px solid var(--dsw-border-l2); border-radius: var(--dsw-radius-md); background: none; color: var(--dsw-label-secondary); cursor: pointer; font-size: 13px; }
+  .pn-icon-btn:hover { background: var(--dsw-hover); color: var(--dsw-label-primary); }
+
+  /* 搜索 / 工具条 */
+  .pn-tools { flex: none; padding: 0 20px 8px; display: flex; gap: 8px; align-items: center; }
+  .pn-search { flex: 1; display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border: .5px solid var(--dsw-border-l2); border-radius: var(--dsw-radius-md); background: #202020; color: var(--dsw-label-tertiary); }
+  .pn-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--dsw-label-primary); font: inherit; }
+  .pn-search input::placeholder { color: var(--dsw-label-caption); }
+  .pn-search kbd { flex: none; font: 11px/1 ui-monospace, Consolas, monospace; color: var(--dsw-label-caption); border: .5px solid var(--dsw-border-l2); border-radius: 3px; padding: 3px 4px 2px; }
+  .pn-ghost { flex: none; height: 30px; padding: 0 9px; border: .5px solid var(--dsw-border-l2); border-radius: var(--dsw-radius-md); background: none; color: var(--dsw-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+  .pn-ghost:hover { background: var(--dsw-hover); color: var(--dsw-label-primary); }
+
+  /* 滚动体 */
+  .pn-body { flex: 1; min-height: 0; overflow: hidden auto; padding: 0 12px 20px; }
+  .pn-body::-webkit-scrollbar { width: 10px; }
+  .pn-body::-webkit-scrollbar-thumb { background: #333; border-radius: 999px; border: 3px solid var(--dsw-bg-base); }
+
+  /* 分组头 */
+  .grp { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 12px 8px 6px; background: var(--dsw-bg-base); cursor: pointer; }
+  .grp-chev { flex: none; width: 10px; color: var(--dsw-label-tertiary); transition: transform .12s ease; }
+  .grp[aria-expanded="false"] .grp-chev { transform: rotate(-90deg); }
+  .grp-label { font-size: 12px; font-weight: 600; color: var(--dsw-label-secondary); }
+  .grp-hint { color: var(--dsw-label-caption); font-size: 11px; }
+  .grp-n { margin-left: auto; color: var(--dsw-label-caption); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .grp-rule { flex: 1; height: 1px; background: #262626; }
+
+  /* 子分组头（功能折叠） */
+  .sub { display: flex; align-items: center; gap: 7px; padding: 6px 8px 3px; cursor: pointer; color: var(--dsw-label-tertiary); }
+  .sub[aria-expanded="false"] .grp-chev { transform: rotate(-90deg); }
+  .sub-name { font-size: 11px; letter-spacing: .02em; }
+  .sub-n { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; }
+
+  /* 技能行 */
+  .list { list-style: none; margin: 0 0 4px; padding: 0; }
+  .row { border-radius: var(--dsw-radius-md); }
+  .row > details > summary { list-style: none; cursor: pointer; display: block; padding: 5px 8px; border-radius: var(--dsw-radius-md); }
+  .row > details > summary::-webkit-details-marker { display: none; }
+  .row > details > summary:hover { background: var(--dsw-hover); }
+  .row-name { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; font-weight: 600; color: var(--dsw-label-primary); word-break: break-all; }
+  .row-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .row-desc { flex: 1 1 auto; min-width: 0; color: var(--dsw-label-secondary); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-tag { flex: none; color: var(--dsw-label-caption); font-size: 10.5px; border: .5px solid var(--dsw-border-l2); border-radius: 3px; padding: 0 5px; line-height: 15px; }
+  .row-name { flex: none; }
+  /* 展开态 */
+  .row > details[open] > summary { background: var(--dsw-bg-layer-2); }
+  .detail { padding: 8px 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .detail p { margin: 0; color: var(--dsw-label-secondary); font-size: 12px; line-height: 1.6; }
+  .detail .when { color: var(--dsw-label-tertiary); }
+  .detail .when span { color: var(--dsw-label-caption); font-size: 10.5px; letter-spacing: .04em; margin-right: 6px; }
+  .detail .when-label { color: var(--dsw-label-caption); font-size: 10.5px; margin-right: 6px; }
+  .detail .open { align-self: flex-start; color: var(--dsw-brand); font-size: 12px; }
+
+  /* ---- C 方案：左侧分类导航 ---- */
+  .phone.rail { flex-direction: row; }
+  .phone.rail::before { display: none; }
+  .phone.rail > .rail-col { margin: 0; }
+  .rail-col { flex: none; width: 132px; border-right: 1px solid #242424; background: #161616; padding: 14px 8px; display: flex; flex-direction: column; gap: 2px; overflow: hidden auto; }
+  .rail-col > .rail-title { padding: 0 8px 8px; font-size: 11px; color: var(--dsw-label-caption); }
+  .rail-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: var(--dsw-radius-md); color: var(--dsw-label-secondary); font-size: 12px; cursor: pointer; }
+  .rail-item:hover { background: var(--dsw-hover); }
+  .rail-item.is-on { background: #262626; color: var(--dsw-label-primary); }
+  .rail-item .n { margin-left: auto; color: var(--dsw-label-caption); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .rail-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  /* 现状恶化示意（A 方案） */
+  .flat-card { display: flex; flex-direction: column; gap: 3px; padding: 9px 8px; border-radius: var(--dsw-radius-xl); }
+  .flat-card:hover { background: var(--dsw-hover); }
+  .flat-name { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; font-weight: 600; color: var(--dsw-label-primary); }
+  .flat-desc { color: var(--dsw-label-secondary); font-size: 12px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .flat-open { color: var(--dsw-brand); font-size: 12px; padding-top: 2px; }
+  .fade-bottom { position: absolute; left: 0; right: 0; bottom: 0; height: 90px; background: linear-gradient(transparent, var(--dsw-bg-base)); pointer-events: none; z-index: 2; }
+  .scroll-flag { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 3; font-size: 11px; color: var(--dsw-label-tertiary); background: #202020; border: .5px solid var(--dsw-border-l2); border-radius: 999px; padding: 3px 10px; }
+
+  /* 标注 */
+  .anno { display: flex; gap: 8px; font-size: 12px; color: var(--ink-3); margin-top: 12px; }
+  .anno b { color: var(--ink-2); font-weight: 600; }
+  .anno-dot { flex: none; width: 5px; height: 5px; border-radius: 999px; background: var(--accent); margin-top: 8px; }
+
+  /* 决策区 */
+  .decision { margin-top: 64px; padding-top: 28px; border-top: 1px solid var(--rule); display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 28px 40px; }
+  .decision h2 { margin: 0 0 10px; font-size: 18px; font-weight: 620; }
+  .decision h3 { margin: 0 0 6px; font-size: 13px; color: var(--ink-2); font-weight: 600; }
+  .decision p { margin: 0 0 10px; color: var(--ink-2); font-size: 13px; }
+  .decision ul { margin: 0; padding-left: 18px; color: var(--ink-2); font-size: 13px; }
+  .decision li { margin-bottom: 6px; }
+  .decision code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--ink); }
+  .callout { border-left: 2px solid var(--accent); padding: 2px 0 2px 14px; color: var(--ink-2); font-size: 13px; }
+  .callout b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header class="doc-head">
+    <div>
+      <div class="doc-kicker">DSH · skills-panel 插件改造</div>
+      <h1 class="doc-title">109 个技能，怎么在 <em>600px</em> 宽的面板里找得到</h1>
+      <p class="doc-sub">现状是一张 109 行、行高 60~80px 的平铺长表：单次滚动约 1.5 屏的内容量，靠"滚"到达任意一个技能平均要滚 30 屏以上，而且完全没有定位手段。下面四个方案都把「分组」当作主结构，差别在于分组维度与行的密度。</p>
+    </div>
+    <dl class="facts">
+      <dt>面板可用宽度</dt><dd>约 560–600px（主列内）</dd>
+      <dt>技能总数</dt><dd>109（截图计数）</dd>
+      <dt>命名分布</dt><dd><code>sh-*</code> 47 · <code>lark-*</code> 28 · <code>redis-*</code> 7 · 其他 27</dd>
+      <dt>接口字段</dt><dd><code>skills/list</code> → name / description / whenToUse / modelInvocable / path</dd>
+      <dt>后端六档来源</dt><dd><code>project-dsh</code> · <code>project-agents</code> · <code>custom</code> · <code>user-dsh</code> · <code>user-agents</code> · <code>bundled</code></dd>
+      <dt>本机实际存在的根</dt><dd>只有 <code>~/.agents/skills</code>（105 项）→ 来源分组只会得到一个桶</dd>
+      <dt>名字前缀自动聚类</dt><dd>能覆盖 49/105 = 47%，剩 56 项无共同前缀</dd>
+      <dt>已选方向</dt><dd>来源分组（可跳过）+ 命名空间自动成簇 · 紧凑默认 + 点击展开</dd>
+    </dl>
+  </header>
+
+  <section class="schemes">
+
+    <!-- ============ A 方案：现状 ============ -->
+    <article class="scheme">
+      <div class="scheme-head">
+        <span class="scheme-tag">A</span>
+        <h2 class="scheme-name">现状：一张平铺长表</h2>
+      </div>
+      <p class="scheme-note">每行固定带 2~4 行描述 + 「查看 SKILL.md」按钮。<b>问题不在分组，在行高</b>：即使加了分组头，展开任意一组后仍然要滚很久，而且滚动条位置不携带任何信息。</p>
+      <div class="phone" aria-label="现状示意">
+        <div class="pn-head">
+          <h3 class="pn-title">技能</h3><span class="pn-count">109</span>
+          <span class="pn-spacer"></span>
+          <button class="pn-icon-btn" type="button" aria-label="刷新">↻</button>
+        </div>
+        <div class="pn-body" id="flatBody">
+          <div class="flat-card"><div class="flat-name">adversarial-reviewer</div><div class="flat-desc">Adversarial code review that breaks the self-review monoculture. Use when you want a genuinely critical review of recent changes, before merging a PR or when you suspect Claude is being too agreeable about code quality.</div><div class="flat-open">查看 SKILL.md</div></div>
+          <div class="flat-card"><div class="flat-name">code-review</div><div class="flat-desc">Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes: Standards and Spec. Runs both reviews in parallel sub-agents and reports them side by side.</div><div class="flat-open">查看 SKILL.md</div></div>
+          <div class="flat-card"><div class="flat-name">diagnose-windows-sandbox-acl</div><div class="flat-desc">Use on Windows for unexpected DSH sandbox access denials: workspace writes or listing fail, or an ordinarily readable path cannot be read.</div><div class="flat-open">查看 SKILL.md</div></div>
+          <div class="flat-card"><div class="flat-name">diagnosing-bugs</div><div class="flat-desc">Diagnosis loop for hard bugs and performance regressions. Use when the user says "diagnose"/"debug this", or reports something broken/throwing/failing/slow.</div><div class="flat-open">查看 SKILL.md</div></div>
+          <div class="flat-card"><div class="flat-name">domain-modeling</div><div class="flat-desc">Build and sharpen a project's domain model. Use when discussing codebase terminology, writing or editing a CONTEXT.md, or recording or editing an ADR.</div><div class="flat-open">查看 SKILL.md</div></div>
+          <div class="flat-card"><div class="flat-name">find-skills</div><div class="flat-desc">Helps users discover and install agent skills when they ask questions like "how do I do X", "find a skill for X".</div><div class="flat-open">查看 SKILL.md</div></div>
+        </div>
+        <div class="fade-bottom"></div>
+        <div class="scroll-flag">109 项 · 约 30+ 屏 · 无定位手段</div>
+      </div>
+      <div class="anno"><span class="anno-dot"></span><span><b>保留</b>：卡片信息完整、hover 高亮、刷新按钮。<b>丢弃</b>：把「行高」当成了不可压缩的成本。</span></div>
+    </article>
+
+    <!-- ============ B 方案：单列 + 两级折叠 ============ -->
+    <article class="scheme is-pick">
+      <div class="scheme-head">
+        <span class="scheme-tag">B</span>
+        <h2 class="scheme-name">单列 · 两级折叠（推荐）</h2>
+        <span class="scheme-flag">推荐</span>
+      </div>
+      <p class="scheme-note">一级按<b>来源</b>分组（系统内置 / 用户安装 / 项目级），二级在用户安装内按<b>路径前缀</b>折叠成功能块。行压到 26px 单行，配搜索框：<b>同屏可见条数从 8 提升到 24</b>，且默认只展开第一组，首屏就能看完全部结构。<span style="color:#8fb6ff">（搜索框右侧那个「全部折叠」按钮我在文档里建议砍掉，见右下角待确认第 3 条。）</span></p>
+      <div class="phone" aria-label="B 方案示意">
+        <div class="pn-head">
+          <h3 class="pn-title">技能</h3><span class="pn-count">109</span>
+          <span class="pn-spacer"></span>
+          <button class="pn-icon-btn" type="button" aria-label="刷新">↻</button>
+        </div>
+        <div class="pn-tools">
+          <label class="pn-search">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.4"/><path d="M11 11l3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            <input placeholder="搜索技能名或描述…" />
+            <kbd>/</kbd>
+          </label>
+          <button class="pn-ghost" type="button">全部折叠</button>
+        </div>
+        <div class="pn-body" id="grpBody">
+          <!-- 系统内置 -->
+          <div class="grp" role="button" tabindex="0" aria-expanded="true" data-group>
+            <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            <span class="grp-label">系统内置</span><span class="grp-hint">随 DSH 发布</span>
+            <span class="grp-rule"></span><span class="grp-n">12</span>
+          </div>
+          <div data-group-body>
+            <ul class="list">
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">code-review</span><span class="row-tag">用户可调用</span><span class="row-desc">按 Standards / Spec 两轴审阅改动，并行子代理出具并排结论</span></div></summary><div class="detail"><p>Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes: Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/spec asked for?).</p><p class="when"><span class="when-label">使用时机</span>审阅分支、PR、进行中的改动，或"审阅 X 之后的改动"。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">adversarial-reviewer</span><span class="row-tag">用户可调用</span><span class="row-desc">对抗式代码审查，打破自我审阅回音室</span></div></summary><div class="detail"><p>Adversarial code review that breaks the self-review monoculture. Forces perspective shifts through hostile reviewer personas that catch blind spots the author's mental model shares with the reviewer.</p><p class="when"><span class="when-label">使用时机</span>想要真正尖锐的审查、合并前自查。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">diagnosing-bugs</span><span class="row-desc">难缠缺陷与性能回退的诊断循环</span></div></summary><div class="detail"><p>Diagnosis loop for hard bugs and performance regressions. Use when the user says "diagnose"/"debug this", or reports something broken/throwing/failing/slow.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">domain-modeling</span><span class="row-desc">打磨项目领域模型：术语表、CONTEXT.md、ADR</span></div></summary><div class="detail"><p>Build and sharpen a project's domain model. Use when discussing codebase terminology, writing or editing a CONTEXT.md, or recording or editing an ADR.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">find-skills</span><span class="row-desc">发现并安装新技能（"有没有能做 X 的技能"）</span></div></summary><div class="detail"><p>Helps users discover and install agent skills when they ask questions like "how do I do X", "find a skill for X", "is there a skill that can…".</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">frontend-design</span><span class="row-desc">有主张的界面视觉设计指引，避免模板味</span></div></summary><div class="detail"><p>Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">research</span><span class="row-desc">对高可信一手来源做调研并落盘 Markdown</span></div></summary><div class="detail"><p>Investigate a question against high-trust primary sources and capture the findings as a Markdown file in the repo.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">tdd</span><span class="row-desc">测试先行开发：红-绿-重构</span></div></summary><div class="detail"><p>Test-driven development. Use when the user wants to build features or fix bugs test-first, mentions "red-green-refactor", or wants integration tests.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">zread</span><span class="row-desc">把代码仓库变成 wiki 式知识库并本地浏览</span></div></summary><div class="detail"><p>Produce and consume a wiki-style knowledge base for a code repository via the <code>zread</code> CLI and its on-disk output under <code>.zread/wiki/</code>.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">diagnose-windows-sandbox-acl</span><span class="row-desc">Windows 沙箱拒绝访问的 ACL 体检与修复</span></div></summary><div class="detail"><p>Use on Windows for unexpected DSH sandbox access denials: workspace writes or listing fail, or an ordinarily readable path cannot be read.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">git-advanced-workflows</span><span class="row-desc">rebase / cherry-pick / bisect / reflog 的干净历史维护</span></div></summary><div class="detail"><p>Master advanced Git workflows including rebasing, cherry-picking, bisect, worktrees, and reflog to maintain clean history.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">skill-creator</span><span class="row-desc">创建、改进、评测技能并优化触发准确率</span></div></summary><div class="detail"><p>Create new skills, modify and improve existing skills, and measure skill performance.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+            </ul>
+          </div>
+
+          <!-- 用户安装 -->
+          <div class="grp" role="button" tabindex="0" aria-expanded="true" data-group>
+            <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            <span class="grp-label">用户安装</span><span class="grp-hint">~/.agents/skills</span>
+            <span class="grp-rule"></span><span class="grp-n">97</span>
+          </div>
+          <div data-group-body>
+            <div class="sub" role="button" tabindex="0" aria-expanded="true" data-group>
+              <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+              <span class="sub-name">飞书 / Lark</span><span class="sub-n">28</span>
+            </div>
+            <div data-group-body>
+              <ul class="list">
+                <li class="row"><details><summary><div class="row-line"><span class="row-name">lark-im</span><span class="row-desc">收发消息、群聊成员、表情回应、交互卡片回调</span></div></summary><div class="detail"><p>飞书即时通讯：收发消息和管理群聊。发送和回复消息、搜索聊天记录、管理群聊成员、上传下载图片和文件、发送加急、发送和处理交互卡片。</p><p class="when"><span class="when-label">使用时机</span>需要发消息、搜索聊天记录、下载聊天文件、处理卡片回调时。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+                <li class="row"><details><summary><div class="row-line"><span class="row-name">lark-base</span><span class="row-desc">多维表格：建表、字段、视图、仪表盘、应用模式</span></div></summary><div class="detail"><p>飞书多维表格（Base）操作：建表、字段、记录、视图、统计、公式/lookup、表单、仪表盘、应用模式、角色权限、模板中心。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+                <li class="row"><details><summary><div class="row-line"><span class="row-name">lark-doc</span><span class="row-desc">云文档正文读写、插图、思维笔记</span></div></summary><div class="detail"><p>飞书云文档（Docx / Wiki）内容操作：读取、创建、编辑文档，插入或下载图片附件，以及操作思维笔记。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+                <li class="row"><details><summary><div class="row-line"><span class="row-name">lark-sheets</span><span class="row-desc">电子表格：结构、样式、图表、透视表、导入导出</span></div></summary><div class="detail"><p>飞书电子表格：创建和操作电子表格，支持工作表与行列结构、单元格读写、区域操作、图表、透视表、条件格式与本地 Excel/CSV 导入导出。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+                <li class="row"><details><summary><div class="row-line"><span class="row-name">lark-drive</span><span class="row-desc">云空间文件与文件夹管理、权限与评论</span></div></summary><div class="detail"><p>飞书云空间：管理 Drive 文件和文件夹，包含上传/下载、复制/移动/删除、元数据、权限、评论与本地文件导入。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+                <li class="row"><details><summary><div class="row-line"><span class="row-name">lark-calendar</span><span class="row-desc">日程与会议室：忙闲查询、推荐时段</span></div></summary><div class="detail"><p>飞书日历：管理日历日程和会议室。查看/搜索日程、创建/更新日程、管理参会人、查询忙闲和推荐时段。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+                <li class="row"><details><summary><div class="row-line"><span class="row-name">lark-minutes</span><span class="row-tag">别名</span><span class="row-desc">仅当上游显式指定时使用，统一交由 lark-meeting</span></div></summary><div class="detail"><p>仅当用户或上游配置显式指定 lark-minutes 时使用，相关请求统一交由 lark-meeting 技能处理。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+                <li class="row"><details><summary><div class="row-line"><span class="row-name">lark-whiteboard</span><span class="row-desc">画板导出预览图与结构化更新</span></div></summary><div class="detail"><p>飞书画板：查询和编辑飞书云文档中的画板。支持导出画板为预览图片、导出原始节点结构、使用多种格式更新画板内容。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              </ul>
+            </div>
+
+            <div class="sub" role="button" tabindex="0" aria-expanded="false" data-group>
+              <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+              <span class="sub-name">Redis</span><span class="sub-n">7</span>
+            </div>
+            <div class="sub" role="button" tabindex="0" aria-expanded="false" data-group>
+              <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+              <span class="sub-name">Windows 装机与排障</span><span class="sub-n">13</span>
+            </div>
+            <div class="sub" role="button" tabindex="0" aria-expanded="false" data-group>
+              <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+              <span class="sub-name">Zed 编辑器</span><span class="sub-n">7</span>
+            </div>
+            <div class="sub" role="button" tabindex="0" aria-expanded="false" data-group>
+              <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+              <span class="sub-name">Agent 工作流（sh-agy-*）</span><span class="sub-n">9</span>
+            </div>
+            <div class="sub" role="button" tabindex="0" aria-expanded="false" data-group>
+              <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+              <span class="sub-name">文档 · 归档 · 转写</span><span class="sub-n">9</span>
+            </div>
+            <div class="sub" role="button" tabindex="0" aria-expanded="false" data-group>
+              <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+              <span class="sub-name">开发流程与协作</span><span class="sub-n">11</span>
+            </div>
+            <div class="sub" role="button" tabindex="0" aria-expanded="false" data-group>
+              <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+              <span class="sub-name">影像与媒体</span><span class="sub-n">3</span>
+            </div>
+            <div class="sub" role="button" tabindex="0" aria-expanded="false" data-group>
+              <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+              <span class="sub-name">未归类</span><span class="sub-n">10</span>
+            </div>
+          </div>
+
+          <!-- 项目级 -->
+          <div class="grp" role="button" tabindex="0" aria-expanded="false" data-group>
+            <svg class="grp-chev" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 3.6L5 6.6l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            <span class="grp-label">当前项目</span><span class="grp-hint">随 workspace 生效</span>
+            <span class="grp-rule"></span><span class="grp-n">0</span>
+          </div>
+        </div>
+      </div>
+      <div class="anno"><span class="anno-dot"></span><span><b>关键收益</b>：默认状态下 109 项只占约 1 屏；箭头收在左侧 10px 内，二级分组不额外占宽。展开的行就地显示完整描述 + 使用时机 + 「查看 SKILL.md」，信息一点没丢。</span></div>
+    </article>
+
+    <!-- ============ C 方案：左侧分类导航 ============ -->
+    <article class="scheme">
+      <div class="scheme-head">
+        <span class="scheme-tag">C</span>
+        <h2 class="scheme-name">左栏分类导航</h2>
+      </div>
+      <p class="scheme-note">把「分组」升级成常驻导航：左栏列来源与功能块，右栏只渲染当前分类。定位最快、<b>滚动条天然消失</b>；代价是每行描述只剩约 300px 宽，且面板一旦窄于 500px 就要退化成 B 方案。</p>
+      <div class="phone rail" aria-label="C 方案示意">
+        <div class="rail-col">
+          <div class="rail-title">全部 109</div>
+          <div class="rail-item is-on">系统内置<span class="n">12</span></div>
+          <div class="rail-item">飞书 / Lark<span class="n">28</span></div>
+          <div class="rail-item">Windows<span class="n">13</span></div>
+          <div class="rail-item">Zed<span class="n">7</span></div>
+          <div class="rail-item">Agent 工作流<span class="n">9</span></div>
+          <div class="rail-item">Redis<span class="n">7</span></div>
+          <div class="rail-item">开发流程<span class="n">11</span></div>
+          <div class="rail-item">文档归档<span class="n">9</span></div>
+          <div class="rail-item">影像媒体<span class="n">3</span></div>
+          <div class="rail-item">未归类<span class="n">10</span></div>
+        </div>
+        <div class="rail-main">
+          <div class="pn-head">
+            <h3 class="pn-title">系统内置</h3><span class="pn-count">12</span>
+            <span class="pn-spacer"></span>
+            <button class="pn-icon-btn" type="button" aria-label="在全部技能中搜索">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.4"/><path d="M11 11l3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+          <div class="pn-body">
+            <ul class="list">
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">adversarial-reviewer</span></div><span class="row-desc">对抗式代码审查，打破自我审阅回音室</span></summary><div class="detail"><p>Adversarial code review that breaks the self-review monoculture.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">code-review</span></div><span class="row-desc">Standards / Spec 两轴审阅，并行子代理</span></summary><div class="detail"><p>Review the changes since a fixed point along two axes: Standards and Spec.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">diagnosing-bugs</span></div><span class="row-desc">难缠缺陷与性能回退的诊断循环</span></summary><div class="detail"><p>Diagnosis loop for hard bugs and performance regressions.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">domain-modeling</span></div><span class="row-desc">领域模型、术语表、ADR</span></summary><div class="detail"><p>Build and sharpen a project's domain model.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">find-skills</span></div><span class="row-desc">发现并安装新技能</span></summary><div class="detail"><p>Helps users discover and install agent skills.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+              <li class="row"><details><summary><div class="row-line"><span class="row-name">frontend-design</span></div><span class="row-desc">有主张的界面视觉设计指引</span></summary><div class="detail"><p>Guidance for distinctive, intentional visual design.</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="anno"><span class="anno-dot"></span><span><b>适合</b>：把面板当成长期开着的工作台。<b>不适合</b>：面板宽度会随主列变化——窄时的降级行为必须一起设计，否则是新的坑。</span></div>
+    </article>
+
+    <!-- ============ D 方案：搜索优先 ============ -->
+    <article class="scheme">
+      <div class="scheme-head">
+        <span class="scheme-tag">D</span>
+        <h2 class="scheme-name">搜索优先 · 分组退居次要</h2>
+      </div>
+      <p class="scheme-note">承认一个事实：109 项里绝大多数时候你只找 1 个。所以把搜索做成主角——输入即过滤，「最近使用 / 常用」置顶，无输入时才显示分组。<b>定位成本最低</b>，但首次浏览时对结构没有帮助。</p>
+      <div class="phone" aria-label="D 方案示意">
+        <div class="pn-head">
+          <h3 class="pn-title">技能</h3><span class="pn-count">109</span>
+          <span class="pn-spacer"></span>
+          <button class="pn-icon-btn" type="button" aria-label="刷新">↻</button>
+        </div>
+        <div class="pn-tools">
+          <label class="pn-search" style="border-color:#4d8dff">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.4"/><path d="M11 11l3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            <input value="zed" readonly />
+            <kbd>esc</kbd>
+          </label>
+        </div>
+        <div class="pn-body">
+          <div class="sub" style="cursor:default"><span class="sub-name">4 个匹配 · 按相关度</span></div>
+          <ul class="list">
+            <li class="row"><details open><summary><div class="row-line"><span class="row-name">sh-zed-lsp-config</span><span class="row-desc">给项目目录配 Zed LSP 白名单，按项目开启省内存</span></div></summary><div class="detail"><p>配置：给项目目录配 Zed <code>.zed/settings.json</code> LSP 白名单，按项目开启省内存。点名使用。</p><p class="when"><span class="when-label">使用时机</span>只想在个别项目里开 LSP、其他项目保持省内存时。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+            <li class="row"><details><summary><div class="row-line"><span class="row-name">sh-zed-agent-triage</span><span class="row-desc">Zed Agent Panel 报错的归因定位</span></div></summary><div class="detail"><p>排障：Zed Agent Panel 报 Internal error / Invalid request / Session is closing 等 agent 侧错误的定位归因。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+            <li class="row"><details><summary><div class="row-line"><span class="row-name">sh-zed-opencode-setup</span><span class="row-desc">Zed 的 opencode agent 安装与供应商配置</span></div></summary><div class="detail"><p>配置：Zed 的 opencode agent 安装修复、思考档位、供应商配置、cc-switch 迁移。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+            <li class="row"><details><summary><div class="row-line"><span class="row-name">sh-zed-session-db</span><span class="row-desc">查 SQLite sidebar_threads 恢复会话</span></div></summary><div class="detail"><p>排障：Zed 会话丢失/恢复/归档，直接查 SQLite sidebar_threads 表。</p><a class="open" href="#">查看 SKILL.md</a></div></details></li>
+          </ul>
+        </div>
+      </div>
+      <div class="anno"><span class="anno-dot"></span><span><b>可以和 B 合并</b>：B 已经把搜索框放上去了。差别只在「无输入时」的默认视图——是显示折叠分组，还是显示最近使用。</span></div>
+    </article>
+
+  </section>
+
+  <section class="decision">
+    <div>
+      <h2>落地路径</h2>
+      <h3>分组怎么算出来（三级，成本递增）</h3>
+      <ul>
+        <li><b>L1 来源 —— 完全动态，但当前机器只有一个桶。</b>后端发现阶段就给每个候选打好了 <code>source</code> 和 <code>rank</code>（六档：<code>project-dsh</code> / <code>project-agents</code> / <code>custom</code> / <code>user-dsh</code> / <code>user-agents</code> / <code>bundled</code>），注册表靠它们合并多个 provider。但 <code>skills/list</code> 只透传 5 个字段，<code>source</code> 被截掉了。而且本机六个根里只存在 <code>~/.agents/skills</code> 一个 —— 所以这一层现在只会得到「用户安装 105」，渲染时应当直接跳过。</li>
+        <li><b>L2 命名空间 —— 完全动态，能自动长出 47%。</b>实测 <code>design/verify-auto-cluster.py</code>：不提任何类目名，按 <code>-</code> 切段统计前缀覆盖，自动得到 <code>lark-*</code> 28、<code>sh-agy-*</code> 8、<code>redis-*</code> 7、<code>sh-zed-*</code> 6，共 49/105。剩下 56 项里，既有命名不统一的（<code>sh-windows-*</code> 只有 3 个、<code>sh-sublime-*</code> 只有 2 个，凑不成簇），也有一批刻意不带命名空间的基础技能（<code>code-review</code>、<code>tdd</code>、<code>grilling</code> 等 23 个）。<b>纯动态到此为止，拿不到 100%。</b></li>
+        <li><b>L3 别名表 —— 静态，但只有 8~12 行。</b>只为把前缀翻译成人话（<code>sh-zed-</code> → 「Zed 编辑器」）。建议放进 <code>&lt;dshHome&gt;/skills-panel.groups.json</code>，你改配置就能改分组名，不用碰代码。</li>
+        <li><b>长期解</b>：<code>SKILL.md</code> 的 frontmatter 支持任意 <code>metadata</code>。让 Host 读 <code>metadata.category</code> 并透传，分类就由技能自己声明、随生态演化。属于 Host 改动，列为第二步。</li>
+      </ul>
+    </div>
+    <div>
+      <h2>需要你拍板的细节</h2>
+      <h3>五件小事</h3>
+      <ul>
+        <li><b>L3 别名表放哪</b>：写死在 <code>client.js</code>，还是放 <code>skills-panel.groups.json</code> 让你自己能改？建议后者。</li>
+        <li><b>要不要顺手推 Host 改动</b>：给 <code>skills/list</code> 补 <code>source</code> / <code>provider</code> / <code>rank</code>。本机只有一个根，不做也能用；做了以后"项目技能 / 全局技能"才分得开。建议先客户端、Host 留第二步。</li>
+        <li><b>行内标签</b>：现在只有「仅用户」。建议不给普通技能加标签，只留例外标记。</li>
+        <li><b>折叠状态记忆</b>：切走再回来保持折叠，还是复位？建议记住。</li>
+        <li><b>「全部折叠 / 全部展开」按钮</b>：建议砍掉——分组本来就少，逐组点击更便宜。</li>
+      </ul>
+      <p class="callout">确认后我按 B 方案改 <code>client.js</code>：只动 <code>CSS</code> 常量、字典和两个新的分组纯函数，不碰 <code>apply</code> 的注册结构。<b>所有技能一条都不会少，只是默认不再全部铺开。</b></p>
+    </div>
+  </section>
+
+</div>
+<script>
+  // 折叠交互：让设计稿可点，跟真实面板行为一致
+  document.querySelectorAll('[data-group]').forEach(function (head) {
+    var body = head.nextElementSibling;
+    if (!body || !body.hasAttribute('data-group-body')) return;
+    function toggle() {
+      var open = head.getAttribute('aria-expanded') === 'true';
+      head.setAttribute('aria-expanded', String(!open));
+      body.style.display = open ? 'none' : '';
+    }
+    head.addEventListener('click', toggle);
+    head.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  });
+</script>
+</body>
+</html>
