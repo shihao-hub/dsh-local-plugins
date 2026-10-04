@@ -1,0 +1,3 @@
+- insert:
+    - id: rider-theme
+      name: '@local/rider-theme'
