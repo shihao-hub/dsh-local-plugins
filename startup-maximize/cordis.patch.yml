@@ -1,0 +1,3 @@
+- insert:
+    - id: startup-maximize
+      name: '@local/startup-maximize'

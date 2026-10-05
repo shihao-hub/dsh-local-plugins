@@ -16,6 +16,7 @@
 | [`traj-translate`](./traj-translate) | `@local/traj-translate-v4` | 轨迹检查器「AI 翻译」标签，为思考过程与原始内容提供 1:1 独立中文翻译面板。 |
 | [`mod-renamer`](./mod-renamer) | `@local/mod-renamer` | 将 Harness 界面所有「Plugins / 插件」文案替换为「模组 (mods)」。 |
 | [`app-restart`](./app-restart) | `@local/app-restart` | 底部状态栏/快捷菜单一键平滑重启 Harness 桌面应用插件。 |
+| [`startup-maximize`](./startup-maximize) | `@local/startup-maximize` | 桌面应用启动后自动将主窗口最大化（Win32 层安全触发，仅限桌面壳运行时生效）。 |
 
 ---
 
