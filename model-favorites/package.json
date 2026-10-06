@@ -1,0 +1,28 @@
+{
+  "name": "@local/model-favorites",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Zed-style Favorites for the composer model selector: a pinned Favorites group, per-row star toggles, and right-side provider captions.",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
