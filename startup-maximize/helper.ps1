@@ -6,7 +6,7 @@
 # re-asserts, and exits. It never touches windows of any other process.
 param(
 	[Parameter(Mandatory = $true)][int]$MainPid,
-	[int]$WaitSec = 30,
+	[int]$WaitSec = 180,
 	[int]$PollMs = 250,
 	[int]$VerifyMs = 2000,
 	[int]$ReassertMs = 2000
@@ -47,12 +47,21 @@ public static class DshStartupMaximize {
 	[StructLayout(LayoutKind.Sequential)] private struct RECT { public int L, T, R, B; }
 	[DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr h, out RECT r);
 	public static IntPtr FindLargestWindow(uint pid) {
+		return FindLargestWindow(pid, null);
+	}
+	public static IntPtr FindLargestWindow(uint pid, string titleSubstring) {
 		IntPtr best = IntPtr.Zero;
 		long bestArea = 0;
 		EnumProc cb = delegate(IntPtr h, IntPtr lp) {
 			uint wpid;
 			GetWindowThreadProcessId(h, out wpid);
-			if (wpid == pid && IsWindowVisible(h) && !IsIconic(h)) {
+			bool pidOk = (pid == 0) || (wpid == pid);
+			if (pidOk && IsWindowVisible(h) && !IsIconic(h)) {
+				if (!string.IsNullOrEmpty(titleSubstring)) {
+					var sb = new System.Text.StringBuilder(512);
+					GetWindowText(h, sb, 512);
+					if (sb.ToString().IndexOf(titleSubstring, StringComparison.OrdinalIgnoreCase) < 0) return true;
+				}
 				RECT r;
 				GetWindowRect(h, out r);
 				long area = (long)(r.R - r.L) * (long)(r.B - r.T);
@@ -64,13 +73,20 @@ public static class DshStartupMaximize {
 		GC.KeepAlive(cb);
 		return best;
 	}
+	[DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr h, System.Text.StringBuilder sb, int max);
 }
 '@
 
 WLog ('begin mainPid={0} exe={1}' -f $MainPid, $exeName)
 $deadline = (Get-Date).AddSeconds($WaitSec)
 while ((Get-Date) -lt $deadline) {
+	# Primary: window owned by the parent process itself.
 	$h = [DshStartupMaximize]::FindLargestWindow([uint32]$MainPid)
+	if ($h -eq [IntPtr]::Zero) {
+		# Fallback: the shell may hand the main window to a sibling electron
+		# process. Match any visible top-level window titled like the app.
+		$h = [DshStartupMaximize]::FindLargestWindow([uint32]0, 'DeepSeek Harness')
+	}
 	if ($h -ne [IntPtr]::Zero) {
 		if ([DshStartupMaximize]::IsZoomed($h)) { WLog ('window already maximized hwnd={0}' -f $h); exit 0 }
 		[void][DshStartupMaximize]::ShowWindow($h, 3) # SW_MAXIMIZE
