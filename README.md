@@ -17,6 +17,10 @@
 | [`mod-renamer`](./mod-renamer) | `@local/mod-renamer` | 将 Harness 界面所有「Plugins / 插件」文案替换为「模组 (mods)」。 |
 | [`app-restart`](./app-restart) | `@local/app-restart` | 底部状态栏/快捷菜单一键平滑重启 Harness 桌面应用插件。 |
 | [`startup-maximize`](./startup-maximize) | `@local/startup-maximize` | 桌面应用启动后自动将主窗口最大化（Win32 层安全触发，仅限桌面壳运行时生效）。 |
+| [`thoughtdag-companion`](./thoughtdag-companion) | `@local/thoughtdag-companion` | ThoughtDAG 伴生模组，隐匿悬浮胶囊并把画布纳管为会话头部原生「思维图」tab。 |
+| [`model-favorites`](./model-favorites) | `@local/model-favorites` | Composer 模型选择器的 Zed 风格「收藏」：置顶收藏分组、行内星标切换、右侧 provider 小字标注。 |
+| [`mcp-panel`](./mcp-panel) | `@local/mcp-panel` | 左侧边栏「接口」面板（MCP）：汇总已配置的 MCP 服务器（stdio/HTTP、命令或 URL、超时/重连配置）与各服务器实时注册的工具清单。 |
+| [`expand-all-sessions`](./expand-all-sessions) | `@local/expand-all-sessions` | 侧边栏会话列表自动全部展开：每个 Workspace 分组的「展开其余 N 个会话」按钮首次出现时自动点到底（limit → Infinity），手动「收起」不会被弹回。 |
 
 ---
 
