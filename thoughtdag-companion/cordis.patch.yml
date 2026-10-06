@@ -1,0 +1,3 @@
+- insert:
+    - id: thoughtdag-companion
+      name: '@local/thoughtdag-companion'

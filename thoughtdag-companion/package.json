@@ -1,0 +1,32 @@
+{
+  "name": "@local/thoughtdag-companion",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Companion mod for dsh-thoughtdag: suppresses the floating pill and embeds ThoughtDAG into native conversation.view tab.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "slots",
+        "uiConversation",
+        "sessions",
+        "uiWorkspace"
+      ]
+    }
+  }
+}
