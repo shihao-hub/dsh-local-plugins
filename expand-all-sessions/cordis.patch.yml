@@ -1,0 +1,3 @@
+- insert:
+    - id: expand-all-sessions
+      name: '@local/expand-all-sessions'

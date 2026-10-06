@@ -1,0 +1,27 @@
+{
+  "name": "@local/expand-all-sessions",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Automatically expands every session group in the sidebar: each workspace's \"show more sessions\" button is clicked through to Infinity the first time it appears, so all sessions are visible immediately.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
