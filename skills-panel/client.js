@@ -12,6 +12,26 @@
       const CSS_TAG_ID = 'skills-panel-styles';
       const NS = 'skills-panel';
       const PREFS_STORAGE_KEY = 'skills-panel.collapsed';
+      const VIEW_STORAGE_KEY = 'skills-panel.view';
+      const VIEW_DEFAULT = 'default'; // 用户安装 + 系统内置
+      const VIEW_ALL = 'all'; // 默认来源 + 当前工作区
+
+      function readView() {
+        try {
+          const raw = window.localStorage.getItem(VIEW_STORAGE_KEY);
+          return raw === VIEW_ALL ? VIEW_ALL : VIEW_DEFAULT;
+        } catch {
+          return VIEW_DEFAULT;
+        }
+      }
+
+      function writeView(view) {
+        try {
+          window.localStorage.setItem(VIEW_STORAGE_KEY, view);
+        } catch {
+          /* Storage unavailable */
+        }
+      }
 
       // In-memory fallback catalog for resilient display across sessions
       const globalSkillsCache = new Map();
@@ -40,6 +60,8 @@
         '.skp_refresh{border:0;background:0 0;color:var(--dsw-alias-label-secondary);cursor:pointer;padding:4px;border-radius:var(--dsw-radius-sm);line-height:1;display:inline-flex;align-items:center;justify-content:center}',
         '.skp_refresh:hover{background:var(--dsw-alias-surface-secondary);color:var(--dsw-alias-label-primary)}',
         '.skp_refresh:disabled{opacity:.4;cursor:default}',
+        '.skp_viewBtn{font-size:11px;font-weight:600;padding:3px 8px;gap:4px;border:.5px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}',
+        '.skp_viewBtn[aria-pressed="true"]{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}',
         '.skp_tools{padding:8px 12px;border-bottom:.5px solid var(--dsw-alias-border-l1);flex:none}',
         '.skp_search{display:flex;align-items:center;gap:6px;background:var(--dsw-alias-surface-secondary);border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);padding:4px 8px}',
         '.skp_search:focus-within{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary)}',
@@ -114,7 +136,11 @@
         'sourceUser': '\u7528\u6237\u5b89\u88c5',
         'sourceWorkspace': '\u5f53\u524d\u5de5\u4f5c\u533a',
         'builtinHint': '\u5185\u7f6e',
-        'workspaceHint': '\u5de5\u4f5c\u533a'
+        'workspaceHint': '\u5de5\u4f5c\u533a',
+        'viewDefaultLabel': '\u9ed8\u8ba4',
+        'viewAllLabel': '\u5168\u90e8',
+        'viewToAll': '\u5207\u6362\u5230\u5168\u90e8\u6280\u80fd\uff08\u542b\u5f53\u524d\u5de5\u4f5c\u533a\uff09',
+        'viewToDefault': '\u5207\u6362\u5230\u9ed8\u8ba4\u89c6\u56fe\uff08\u4ec5\u7528\u6237\u5b89\u88c5\u4e0e\u7cfb\u7edf\u5185\u7f6e\uff09'
       };
 
       /** English dictionary, checked complete against the zh key set. */
@@ -145,7 +171,11 @@
         'sourceUser': 'Installed',
         'sourceWorkspace': 'Workspace',
         'builtinHint': 'read-only',
-        'workspaceHint': 'this workspace'
+        'workspaceHint': 'this workspace',
+        'viewDefaultLabel': 'Default',
+        'viewAllLabel': 'All',
+        'viewToAll': 'Switch to all skills (including this workspace)',
+        'viewToDefault': 'Switch to default view (installed and built in only)'
       };
 
       //#region dsh-resource file addresses
@@ -641,6 +671,7 @@
 
         const [reload, setReload] = React.useState(0);
         const [query, setQuery] = React.useState('');
+        const [view, setView] = React.useState(readView);
         const [collapsed, setCollapsed] = React.useState(readCollapsed);
         const [state, setState] = React.useState({
           status: globalSkillsCache.size > 0 ? 'ready' : 'loading',
@@ -705,7 +736,12 @@
 
         const matched = filterSkills(state.skills, query);
         const searching = query.trim() !== '';
-        const sections = groupedSkills(matched, cwd, t);
+        const scopeRoots = skillRootsFor(state.skills, cwd);
+        const scoped =
+          view === VIEW_ALL
+            ? matched
+            : matched.filter((skill) => sourceOf(skill.path, scopeRoots) !== 'workspace');
+        const sections = groupedSkills(scoped, cwd, t);
 
         const isNodeExpanded = (id) => searching || !collapsed.has(id);
 
@@ -799,12 +835,29 @@
           );
         } else if (state.skills.length === 0) {
           body = h('p', { className: 'skp_hint' }, t('empty'));
-        } else if (matched.length === 0) {
+        } else if (scoped.length === 0) {
           body = h(
             'div',
             { className: 'skp_hint' },
             h('p', { className: 'skp_detailText' }, t('noResult')),
-            h('button', { type: 'button', className: 'skp_hintAction', onClick: () => setQuery('') }, t('browseAll'))
+            view === VIEW_DEFAULT
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'skp_hintAction',
+                    onClick: () => {
+                      setView(VIEW_ALL);
+                      writeView(VIEW_ALL);
+                    }
+                  },
+                  t('viewToAll')
+                )
+              : h(
+                  'button',
+                  { type: 'button', className: 'skp_hintAction', onClick: () => setQuery('') },
+                  t('browseAll')
+                )
           );
         } else {
           body = renderSections();
@@ -819,8 +872,34 @@
             'header',
             { className: 'skp_header' },
             h('h1', { className: 'skp_title' }, t('title')),
-            state.skills.length > 0 ? h('span', { className: 'skp_count' }, String(state.skills.length)) : null,
+            scoped.length > 0
+              ? h(
+                  'span',
+                  { className: 'skp_count' },
+                  view === VIEW_ALL ? String(scoped.length) : `${scoped.length}/${state.skills.length}`
+                )
+              : null,
             h('span', { className: 'skp_spacer' }),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'skp_refresh skp_viewBtn',
+                onClick: () => {
+                  const next = view === VIEW_DEFAULT ? VIEW_ALL : VIEW_DEFAULT;
+                  setView(next);
+                  writeView(next);
+                },
+                'aria-pressed': view === VIEW_ALL ? 'true' : 'false',
+                title: view === VIEW_DEFAULT ? t('viewToAll') : t('viewToDefault')
+              },
+              h('span', { 'aria-hidden': 'true' }, view === VIEW_DEFAULT ? t('viewDefaultLabel') : t('viewAllLabel')),
+              h(
+                'span',
+                { className: 'skp_visuallyHidden' },
+                view === VIEW_DEFAULT ? t('viewToAll') : t('viewToDefault')
+              )
+            ),
             h(
               'button',
               {
