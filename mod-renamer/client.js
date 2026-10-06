@@ -50,6 +50,22 @@
       const ATTRIBUTES = ['title', 'placeholder', 'aria-label', 'data-tooltip'];
       const scopedContainers = new WeakSet();
 
+      /**
+       * Editable regions (composer, search inputs, textareas) are user
+       * content: if the user literally types 插件 there, it must stay as
+       * typed. Attributes like placeholder are still renamed elsewhere.
+       */
+      function insideEditable(node) {
+        let current = node.nodeType === 1 ? node : node.parentElement;
+        while (current !== null) {
+          const tag = current.tagName;
+          if (tag === 'TEXTAREA' || tag === 'INPUT') return true;
+          if (current.isContentEditable === true) return true;
+          current = current.parentElement;
+        }
+        return false;
+      }
+
       function trimmed(node) {
         return (node.nodeValue ?? '').trim();
       }
@@ -69,6 +85,7 @@
       }
 
       function processTextNode(node, force) {
+        if (insideEditable(node)) return;
         if (force) {
           node.nodeValue = renameSubstring(node.nodeValue);
           return;
@@ -141,7 +158,7 @@
       function processNode(node) {
         if (node === null || node === undefined) return;
         if (node.nodeType === 3) {
-          if (!insideScopedContainer(node)) renameExact(node);
+          processTextNode(node, false);
           return;
         }
         if (node.nodeType !== 1) return;
