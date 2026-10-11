@@ -20,6 +20,7 @@
 | [`mcp-panel`](./mcp-panel) | `@local/mcp-panel` | 左侧边栏「接口」面板（MCP）：汇总已配置的 MCP 服务器（stdio/HTTP、命令或 URL、超时/重连配置）与各服务器实时注册的工具清单。 |
 | [`expand-all-sessions`](./expand-all-sessions) | `@local/expand-all-sessions` | 侧边栏会话列表自动全部展开：每个 Workspace 分组的「展开其余 N 个会话」按钮首次出现时自动点到底（limit → Infinity），手动「收起」不会被弹回。 |
 | [`pin-highlight`](./pin-highlight) | `@local/pin-highlight` | 侧边栏置顶图钉着色：把置顶图钉由 caption 灰改为琥珀色（静置与 hover 两态均覆盖），并在通用设置提供色盘（预设+自定义+复位）；纯 CSS 注入，不触碰 DOM 与原生行为。 |
+| [`active-session-highlight`](./active-session-highlight) | `@local/active-session-highlight` | 侧边栏当前会话行高亮：整行 18% 同色底纹（无左条/无边框；原生把「选中」与「hover」写成同一条 token，Rider Dark 下几乎零差异），并在通用设置提供色盘（预设+自定义+复位）；纯 CSS 注入。 |
 
 ---
 

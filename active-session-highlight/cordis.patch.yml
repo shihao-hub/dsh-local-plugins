@@ -1,0 +1,3 @@
+- insert:
+    - id: active-session-highlight
+      name: '@local/active-session-highlight'

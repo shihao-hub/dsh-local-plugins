@@ -1,0 +1,29 @@
+{
+  "name": "@local/active-session-highlight",
+  "version": "1.0.0",
+  "private": true,
+  "icon": "./icon.svg",
+  "type": "module",
+  "description": "Makes the open session in the sidebar unmistakable: an 18% accent tint on the row whose aria-selected is true, with a general-settings row for presets, a native color picker, and a reset. Pure CSS injection, no DOM mutation.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
