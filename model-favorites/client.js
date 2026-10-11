@@ -38,6 +38,8 @@
       const STORAGE_KEY = '@local/model-favorites:favorites:v1';
       const FAVORITES_GROUP_ID = '@favorites';
       const SEAT = 'conversation.input.model';
+      /** 席位条目崩溃退位后最多自动重建的次数（防故障循环）。 */
+      const MAX_SEAT_HEALS = 3;
 
       /** Minimal className joiner (the runtime exposes no clsx). */
       function clsx() {
@@ -116,6 +118,8 @@
        * `register-failed` → the registration threw (see console).
        */
       const statusRef = { phase: 'loaded' };
+      /** 已执行的自动重建次数。 */
+      let seatHeals = 0;
 
       // ---------------------------------------------------------------------
       // Locale: every key the seat renders, copied from the shipped `model`
@@ -325,13 +329,29 @@
           for (const model of group.models) byKey.set(group.id + '/' + model.id, { group, model, label });
         }
         const models = [];
-        for (const id of favoriteIds) {
+        // favorites: 最近收藏在最上（Zed 式「移动到上方」），因此倒序读取存储顺序
+        for (const id of [...favoriteIds].reverse()) {
           const hit = byKey.get(id);
           if (hit === undefined) continue;
           models.push({ ...hit.model, favoriteOf: hit.group.id, favoriteProviderLabel: hit.label });
         }
         if (models.length === 0) return [];
         return [{ id: FAVORITES_GROUP_ID, name: t('favorites'), models }];
+      }
+
+      /**
+       * 移动语义：已收藏的模型从原 provider 分组中移除，只在顶部「收藏」分组出现一次
+       * （分组内被全部收藏时该分组连同表头一起消失；行右端的 provider 小字保证不歧义）。
+       */
+      function withoutFavorites(orderedGroups, favoriteIds) {
+        if (favoriteIds.length === 0) return orderedGroups;
+        const favorited = new Set(favoriteIds);
+        return orderedGroups
+          .map((group) => ({
+            ...group,
+            models: group.models.filter((model) => !favorited.has(group.id + '/' + model.id))
+          }))
+          .filter((group) => group.models.length > 0);
       }
 
       // ---------------------------------------------------------------------
@@ -366,9 +386,9 @@
         const id = React.useId();
 
         const orderedGroups = React.useMemo(() => orderModelProviders(state.groups), [state.groups]);
-        // favorites: pinned Favorites group first, hidden while empty.
+        // favorites: 「收藏」分组置顶（空则隐藏），且已收藏项从原 provider 分组移走（移动语义，不重复）
         const menuGroups = React.useMemo(
-          () => [...buildFavoriteGroups(orderedGroups, favoriteIds, t), ...orderedGroups],
+          () => [...buildFavoriteGroups(orderedGroups, favoriteIds, t), ...withoutFavorites(orderedGroups, favoriteIds)],
           [orderedGroups, favoriteIds, t]
         );
         const choices = React.useMemo(
@@ -494,6 +514,10 @@
         React.useLayoutEffect(() => {
           if (open && pane === 'model' && activeModelIndex >= 0) itemRefs.current[activeModelIndex]?.scrollIntoView({ block: 'nearest' });
         }, [open, pane, activeModelIndex, visibleModels]);
+        // favorites: 依赖里额外带上 filteredGroups / showSearch —— 菜单高度会随收藏、
+        // 取消收藏、分组被收藏清空、搜索框出现而变化，原版依赖 [open, pane, state, query]
+        // 在这些时刻不重排，表现为"菜单只往下长、压住输入框"。（实测 ResizeObserver 回调
+        // 在本机 Electron 窗口不触发，故用渲染依赖驱动，内容变化即在同一 commit 内重排。）
         React.useLayoutEffect(() => {
           if (!open) {
             setMenuPos(null);
@@ -518,7 +542,7 @@
             window.removeEventListener('scroll', place, true);
             window.removeEventListener('resize', place);
           };
-        }, [open, pane, state, query]);
+        }, [open, pane, state, query, filteredGroups, showSearch]);
         if (!available) return null;
         const show = () => {
           setSelectionFocus(false);
@@ -1090,7 +1114,13 @@
       // then shadow the composer seat.
       // ---------------------------------------------------------------------
 
-      const inject = ['slots', 'locale', 'sessions'];
+      // 必须与内置 model-selection 的注入面一致：本插件的席位 `inject(sessionId)`
+      // 回调里会调用 `ctx.modelDirectories.directoryFor(sessionId)`，该调用链内部访问
+      // `remote.session`；Cordis 按「当前注入作用域」校验服务访问，缺少 remote /
+      // remote.session 时会在会话目录首次创建时抛
+      // `cannot get property "remote.session" without inject`，导致席位条目被
+      // abdicate（一次崩溃即永久退位，界面静默回退到内置选择器）。
+      const inject = ['slots', 'locale', 'sessions', 'remote', 'remote.session'];
 
       /** Status row shown in Settings → General while the plugin is enabled. */
       function StatusRow({ t }) {
@@ -1146,9 +1176,17 @@
         ctx.inject(['slots', 'modelDirectories'], (scope) => {
           const models = scope.modelDirectories;
           const sessions = scope.sessions;
-          scope.slots.inject(SEAT, () => {
+          /** 当前席位条目注册的 disposer；重建时先释放旧条目，避免同优先级冲突。 */
+          let seatEntry = null;
+          const mountSeat = () => {
+            if (seatEntry !== null) {
+              try {
+                seatEntry();
+              } catch (disposeError) {}
+              seatEntry = null;
+            }
             try {
-              const disposer = scope.slots.register(
+              seatEntry = scope.slots.register(
                 {
                   name: SEAT,
                   // Shadow the shipped occupant (priority 0): lowest renders.
@@ -1171,12 +1209,36 @@
               );
               statusRef.phase = 'seat';
               console.log('[model-favorites] seat shadow registered on conversation.input.model (priority -1)');
-              return disposer;
             } catch (error) {
               statusRef.phase = 'register-failed';
+              seatEntry = null;
               console.error('[model-favorites] seat registration failed:', error);
-              return () => {};
             }
+          };
+          // 渲染崩溃会让席位条目被 abdicate（一次性永久退位），界面随后静默回退到内置
+          // 选择器且不会自愈；这里监听崩溃通道，重建一个全新条目顶回席位。
+          ctx.effect(
+            () =>
+              ctx.slots.onEntryError((key, entry, error, info) => {
+                if (key !== SEAT || info.abdicated !== true) return;
+                if (entry === undefined || entry.options === undefined || entry.options.priority !== -1) return;
+                if (seatHeals >= MAX_SEAT_HEALS) return;
+                seatHeals += 1;
+                console.warn('[model-favorites] seat entry abdicated, rebuilding (#' + seatHeals + '):', error);
+                setTimeout(mountSeat, 500);
+              }),
+            'model-favorites: seat self-heal'
+          );
+          scope.slots.inject(SEAT, () => {
+            mountSeat();
+            return () => {
+              if (seatEntry !== null) {
+                try {
+                  seatEntry();
+                } catch (disposeError) {}
+                seatEntry = null;
+              }
+            };
           });
         });
       }
