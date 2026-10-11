@@ -11,7 +11,12 @@
 #     every user-driven change (debounced). Maximized/minimized states are
 #     recorded as a zoomed flag, not as raw coordinates, so a maximized
 #     session restores maximized and a normal session restores its exact
-#     last rectangle.
+#     last rectangle. Hidden frames (window closed to background) and
+#     off-screen/degenerate rects are never persisted: Chromium parks a
+#     hidden window at (-25600,-25600), and once saved, the next boot
+#     would faithfully restore the main window off-screen (invisible app).
+#     A state saved that way before this guard existed is rejected and
+#     deleted on restore instead of applied.
 #
 # It never touches windows of any other process.
 param(
@@ -51,8 +56,9 @@ public static class DshWindowMemory {
 	private delegate bool EnumProc(IntPtr h, IntPtr lp);
 	[DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc cb, IntPtr lp);
 	[DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-	[DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
+	[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
 	[DllImport("user32.dll")] private static extern bool IsIconic(IntPtr h);
+	[DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
 	[DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
 	[DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
 	[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
@@ -87,6 +93,17 @@ public static class DshWindowMemory {
 		GC.KeepAlive(cb);
 		return best;
 	}
+	public static bool IsSaneRect(int x, int y, int w, int h) {
+		if (w < 120 || h < 80) return false;
+		// SM_XVIRTUALSCREEN(76), SM_YVIRTUALSCREEN(77), SM_CXVIRTUALSCREEN(78), SM_CYVIRTUALSCREEN(79):
+		// the bounding box of all monitors. A hidden window parked by Chromium at
+		// (-25600,-25600) has no meaningful overlap and is rejected here.
+		int vx = GetSystemMetrics(76), vy = GetSystemMetrics(77);
+		int vw = GetSystemMetrics(78), vh = GetSystemMetrics(79);
+		int ix = System.Math.Min(x + w, vx + vw) - System.Math.Max(x, vx);
+		int iy = System.Math.Min(y + h, vy + vh) - System.Math.Max(y, vy);
+		return ix >= 120 && iy >= 40;
+	}
 }
 '@
 
@@ -102,13 +119,26 @@ function Read-State {
 	} catch { WLog ('state read failed: ' + $_.Exception.Message); return $null }
 }
 
+function Test-SaneGeometry([int]$x, [int]$y, [int]$w, [int]$h) {
+	return [DshWindowMemory]::IsSaneRect($x, $y, $w, $h)
+}
+
 function Save-State([int]$x, [int]$y, [int]$w, [int]$h, [bool]$zoomed) {
+	if (-not $zoomed -and -not (Test-SaneGeometry -x $x -y $y -w $w -h $h)) {
+		# Chromium parks a hidden window at (-25600,-25600) (and a closed-to-
+		# background shell may shrink it while parked); persisting that would
+		# make the next boot restore the main window off-screen — an app that
+		# looks like it failed to start. Keep the previous good state instead.
+		WLog ('state save skipped: off-screen or degenerate rect {0}x{1} @({2},{3})' -f $w, $h, $x, $y)
+		return $false
+	}
 	try {
 		$tmp = "$StateFile.tmp"
 		@{ x = $x; y = $y; w = $w; h = $h; zoomed = $zoomed; at = (Get-Date -Format o) } |
 			ConvertTo-Json -Compress | Set-Content -LiteralPath $tmp -Encoding UTF8
 		Move-Item -LiteralPath $tmp -Destination $StateFile -Force
-	} catch { WLog ('state save failed: ' + $_.Exception.Message) }
+		return $true
+	} catch { WLog ('state save failed: ' + $_.Exception.Message); return $false }
 }
 
 # ---- phase 1: wait for the main window, then restore saved geometry ----
@@ -137,11 +167,20 @@ if ($null -ne $saved) {
 		[void][DshWindowMemory]::ShowWindow($hwnd, 3) # SW_MAXIMIZE
 		WLog 'restored: maximized (per saved state)'
 	} elseif ($saved.w -gt 0 -and $saved.h -gt 0) {
-		# SWP_NOZORDER (0x4) | SWP_NOACTIVATE (0x10): geometry only.
-		[void][DshWindowMemory]::SetWindowPos($hwnd, [IntPtr]::Zero, $saved.x, $saved.y, $saved.w, $saved.h, 0x14)
-		$r = New-Object DshWindowMemory+RECT
-		[void][DshWindowMemory]::GetWindowRect($hwnd, [ref]$r)
-		WLog ('restored: {0}x{1} @({2},{3}) (actual {4}x{5} @({6},{7}))' -f $saved.w, $saved.h, $saved.x, $saved.y, ($r.R - $r.L), ($r.B - $r.T), $r.L, $r.T)
+		if (-not (Test-SaneGeometry -x $saved.x -y $saved.y -w $saved.w -h $saved.h)) {
+			# Poisoned by a pre-guard build: the hidden window's park position
+			# (-25600,-25600) was persisted. Delete it instead of moving the
+			# fresh main window off-screen; the watcher below re-saves the
+			# current, sane geometry shortly after boot.
+			WLog ('saved state rejected: off-screen or degenerate rect {0}x{1} @({2},{3}); deleted, keeping default geometry' -f $saved.w, $saved.h, $saved.x, $saved.y)
+			Remove-Item -LiteralPath $StateFile -ErrorAction SilentlyContinue
+		} else {
+			# SWP_NOZORDER (0x4) | SWP_NOACTIVATE (0x10): geometry only.
+			[void][DshWindowMemory]::SetWindowPos($hwnd, [IntPtr]::Zero, $saved.x, $saved.y, $saved.w, $saved.h, 0x14)
+			$r = New-Object DshWindowMemory+RECT
+			[void][DshWindowMemory]::GetWindowRect($hwnd, [ref]$r)
+			WLog ('restored: {0}x{1} @({2},{3}) (actual {4}x{5} @({6},{7}))' -f $saved.w, $saved.h, $saved.x, $saved.y, ($r.R - $r.L), ($r.B - $r.T), $r.L, $r.T)
+		}
 	} else {
 		WLog 'saved state had no usable geometry; skipped restore'
 	}
@@ -158,12 +197,12 @@ while ($true) {
 	$parentAlive = Get-Process -Id $MainPid -ErrorAction SilentlyContinue
 	if ($null -eq $parentAlive) { WLog 'parent exited; watcher exits'; exit 0 }
 	if ([DshWindowMemory]::IsIconic($hwnd)) { continue } # minimized: keep last state
+	if (-not [DshWindowMemory]::IsWindowVisible($hwnd)) { continue } # hidden (closed to background): keep last state
 
 	if ([DshWindowMemory]::IsZoomed($hwnd)) {
 		if (-not $last.zoomed) {
 			$last.zoomed = $true
-			Save-State $last.x $last.y $last.w $last.h $true
-			WLog 'saved: maximized'
+			if (Save-State $last.x $last.y $last.w $last.h $true) { WLog 'saved: maximized' }
 		}
 		$dirtySince = $null
 		continue
@@ -179,8 +218,9 @@ while ($true) {
 		if ($null -eq $dirtySince) { $dirtySince = Get-Date }
 	}
 	if ($null -ne $dirtySince -and ((Get-Date) - $dirtySince).TotalMilliseconds -ge $SaveDebounceMs) {
-		Save-State $last.x $last.y $last.w $last.h $false
+		if (Save-State $last.x $last.y $last.w $last.h $false) {
+			WLog ('saved: {0}x{1} @({2},{3})' -f $last.w, $last.h, $last.x, $last.y)
+		}
 		$dirtySince = $null
-		WLog ('saved: {0}x{1} @({2},{3})' -f $last.w, $last.h, $last.x, $last.y)
 	}
 }
