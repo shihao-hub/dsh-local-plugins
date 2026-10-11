@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Automatically expands every session group in the sidebar: each workspace's \"show more sessions\" button is clicked through to Infinity the first time it appears, so all sessions are visible immediately.",
+  "description": "Loads every sidebar session group in full on first paint: a single React state update (fiber hook dispatch) sets the group's visible-session limit to Infinity instead of clicking \"show more sessions\" step by step; collapsing a group stays manual.",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -12,6 +12,7 @@
   "files": [
     "index.js",
     "client.js",
+    "self-test.mjs",
     "cordis.patch.yml",
     "icon.svg"
   ],
