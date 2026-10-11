@@ -82,7 +82,14 @@
         '--dsw-alias-button-tool-bar-hover': pair('#2a2d2e'),
 
         // interactive states
-        '--dsw-alias-interactive-bg-hover': pair('#2a2d2e'),
+        // Hover fill sits between --dsw-alias-bg-base (#262626) and
+        // --dsw-alias-bg-module-platform (#4a4d51), so it still reads as a hover
+        // on both the darker sidebar (--dsw-specific-sidebar-fill #2b2b2b) and the
+        // lighter module cards: lighter on the former, darker on the latter.
+        // The previous #2a2d2e was only (-1,+2,+3) away from the sidebar fill, which
+        // made hover — and, because the workspace rows share this token with their
+        // `selected` state, the open session too — invisible in the sidebar.
+        '--dsw-alias-interactive-bg-hover': pair('#393b41'),
         '--dsw-alias-interactive-bg-active': pair('#4a4d51'),
         '--dsw-alias-interactive-bg-hover-accent': pair('#354f85'),
         '--dsw-alias-interactive-bg-hover-danger': pair('#94151b'),
