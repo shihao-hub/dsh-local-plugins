@@ -1,0 +1,24 @@
+{
+  "name": "@local/window-memory",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Remembers the DeepSeek Harness desktop window size and position, and restores them on the next startup.",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "helper.ps1",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

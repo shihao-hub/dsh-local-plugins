@@ -1,0 +1,28 @@
+{
+  "name": "@local/pin-highlight",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Makes pinned sessions in the sidebar unmistakable: a warm accent bar and tint on pinned rows, and the rest-state pin icon recolored from caption gray to the accent color. Pure CSS injection, no DOM mutation.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
