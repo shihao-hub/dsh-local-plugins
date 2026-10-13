@@ -11,7 +11,7 @@
   },
   "files": [
     "index.js",
-    "helper.ps1",
+    "helper.cs",
     "cordis.patch.yml",
     "icon.svg",
     "README.md"
