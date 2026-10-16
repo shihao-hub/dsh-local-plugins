@@ -246,38 +246,44 @@
         'row.description': '来自 Zed 主题包的 JetBrains Rider 深色配色',
         'row.enable': '启用 JetBrains Rider Dark',
         'row.disable': '停用 JetBrains Rider Dark',
+        'row.lightBase':
+          '当前基座是浅色（你在「外观」里选了浅色）：Rider 深色配色已自动撤下，避免深浅混搭。切回「深色」即自动恢复。',
         'row.persistFailed':
-          '外观偏好没能写入设置文件（常见原因是该文件正被编辑器等其它程序占用）：基座仍是浅色，本主题只应用了配色，代码高亮等仍是浅色。请关闭占用该文件的程序后重新开关一次。'
+          '外观偏好没能写入设置文件（常见原因是该文件正被编辑器等其它程序占用）：基座不是深色，配色已自动撤下，本主题暂不生效。请关闭占用该文件的程序后重新开关一次。'
       };
       const en = {
         'row.description': 'JetBrains Rider dark palette, ported from the Zed theme package',
         'row.enable': 'Enable JetBrains Rider Dark',
         'row.disable': 'Disable JetBrains Rider Dark',
+        'row.lightBase':
+          'The base scheme is light (you picked Light under Appearance): the Rider palette has been withdrawn so dark tokens never sit on a light base. It comes back automatically when you pick Dark again.',
         'row.persistFailed':
-          'The appearance preference could not be saved (usually because another program holds the settings file open): the base scheme is still light, so only the palette is applied and code highlighting stays light. Close that program and toggle the switch again.'
+          'The appearance preference could not be saved (usually because another program holds the settings file open): the base scheme is not dark, so the palette has been withdrawn and the theme is inactive. Close that program and toggle the switch again.'
       };
 
       /**
-       * Verdict on whether the activated palette is actually rendering as intended.
+       * Why the palette is not currently painting, if it is not.
        *
-       * The palette itself rides a plugin-owned override layer, so it applies no
-       * matter what; the *base scheme* is what the durable settings preference
-       * decides, and a rejected preference write (the Host settings document is
-       * unwritable while another program holds the file) makes ThemeRuntime.adopt()
-       * put the old durable preference back. A dark-only palette left on the light
-       * base keeps the light `--shiki-*` sheet and the light structural rules, so
-       * the row has to say so rather than look half-applied.
+       * The palette is dark-only, so it may only ride a dark base scheme (see
+       * {@link reconcile} — the layer is mounted and withdrawn with the scheme).
+       * A light base has exactly two causes, and the row owes the user the right
+       * one:
        *
-       * `preference` is deliberately not part of the verdict: adoption falling back
-       * to a durable `dark` renders exactly right, and only the scheme decides
-       * whether the palette is sitting on the base it was built for.
+       * - `light`: the user picked Light in the built-in Appearance row. Their
+       *   newer intent wins; we withdraw quietly and say how to come back.
+       * - `persist-failed`: we asked for a dark base and the durable preference
+       *   did not move, which on this platform means the Host settings document
+       *   is unwritable (another program holds the file open).
        *
        * @param enabled - whether the switch is on.
        * @param snapshot - theme snapshot, i.e. `theme.getTheme()`.
-       * @returns notice key to render, or null when the palette renders as intended.
+       * @returns notice key to render, or null when the palette is painting.
        */
-      const persistNotice = (enabled, snapshot) =>
-        enabled && snapshot.active.colorScheme !== 'dark' ? 'persist-failed' : null;
+      const noticeFor = (enabled, snapshot) => {
+        if (!enabled) return null;
+        if (snapshot.active.colorScheme === 'dark') return null;
+        return snapshot.preference === 'light' ? 'light-base' : 'persist-failed';
+      };
 
       const inject = ['theme', 'slots', 'locale'];
 
@@ -325,9 +331,27 @@
           const state = { enabled, notice };
           for (const notify of subscribers) notify(state);
         };
-        /** Re-read the rendering verdict; publish only when it actually changed. */
-        const refreshNotice = () => {
-          const next = persistNotice(enabled, theme.getTheme());
+
+        const mountLayer = () => {
+          if (layer === null) layer = theme.overrideTokens(LAYER_SOURCE, TOKENS);
+        };
+        const dropLayer = () => {
+          if (layer === null) return;
+          layer();
+          layer = null;
+        };
+
+        /**
+         * Bring the override layer and the row's notice in line with the current
+         * snapshot. Driven by `theme/change`, so a preference write that is refused
+         * (adoption puts the old durable preference back) withdraws the layer
+         * instead of leaving a dark palette painted on a light base.
+         */
+        const reconcile = () => {
+          const snapshot = theme.getTheme();
+          if (enabled && snapshot.active.colorScheme === 'dark') mountLayer();
+          else dropLayer();
+          const next = noticeFor(enabled, snapshot);
           if (next === notice) return;
           notice = next;
           publishState();
@@ -338,26 +362,40 @@
           return BUILTIN_PREFERENCES.indexOf(previous) === -1 ? 'dark' : previous;
         };
 
-        const activate = () => {
-          if (layer === null) layer = theme.overrideTokens(LAYER_SOURCE, TOKENS);
-          // A dark-only palette needs the dark colour scheme, and the durable
-          // preference is what adoption falls back to once we stop being selected.
-          theme.setTheme('dark');
-          theme.setTheme(THEME_ID);
+        /**
+         * Turn the plugin on.
+         *
+         * @param force - true only for an explicit switch flip. A palette can only
+         * ride a dark base, so flipping the switch on asks for one; restoring the
+         * stored switch position on load must NOT, because a `light` preference
+         * adopted since then is the user's newer intent (picking Dark again brings
+         * the palette straight back through `reconcile`).
+         */
+        const activate = (force) => {
           enabled = true;
           notice = null;
+          const adopted = theme.getTheme().preference;
+          // The durable preference is what adoption falls back to once we stop
+          // being selected; a refused write leaves it in place and `reconcile`
+          // keeps the layer off instead of half-applying the palette.
+          if (force || adopted !== 'light') {
+            theme.setTheme('dark');
+            theme.setTheme(THEME_ID);
+          }
           publishState();
+          reconcile();
         };
 
         const deactivate = () => {
-          if (layer !== null) {
-            layer();
-            layer = null;
-          }
-          theme.setTheme(previousPreference());
           enabled = false;
           notice = null;
+          dropLayer();
           publishState();
+          // Undo only a preference write this plugin displaced. A preference the
+          // user picked in the built-in row afterwards is newer intent and must
+          // win, and after a refused write there is nothing to undo.
+          const current = theme.getTheme().preference;
+          if (current === THEME_ID || current === 'dark') theme.setTheme(previousPreference());
         };
 
         const setEnabled = (on) => {
@@ -366,34 +404,31 @@
             const current = theme.getTheme().preference;
             if (BUILTIN_PREFERENCES.indexOf(current) !== -1) writeStored(PREVIOUS_KEY, current);
             writeStored(ENABLED_KEY, '1');
-            activate();
+            activate(true);
             return;
           }
           writeStored(ENABLED_KEY, null);
           deactivate();
         };
 
-        if (enabled) activate();
+        if (enabled) activate(false);
 
         /**
-         * A rejected preference write only becomes visible when the runtime adopts
-         * the durable preference again, so the verdict is read on `theme/change`
-         * rather than assumed right after `activate()` — that also keeps a write
-         * that does land (scheme flips to dark moments later) from flashing a
-         * warning that would immediately have to be taken back.
+         * One reconcile per snapshot change, rather than a verdict assumed right
+         * after `activate()`: the scheme a write actually lands on is only visible
+         * once adoption has run, and reading it here also withdraws the layer the
+         * moment the base stops being dark.
          */
         ctx.effect(() => {
-          const dispose = ctx.on('theme/change', refreshNotice);
+          const dispose = ctx.on('theme/change', reconcile);
           return () => {
             if (typeof dispose === 'function') dispose();
           };
-        }, 'rider-theme: appearance notice');
+        }, 'rider-theme: appearance reconcile');
 
         ctx.effect(
           () => () => {
-            if (layer === null) return;
-            layer();
-            layer = null;
+            dropLayer();
           },
           'rider-theme: override layer'
         );
@@ -438,7 +473,11 @@
             ),
             state.notice === null
               ? null
-              : h('div', { className: 'rdt_warn', role: 'status' }, t('row.persistFailed'))
+              : h(
+                  'div',
+                  { className: 'rdt_warn', role: 'status' },
+                  t(state.notice === 'light-base' ? 'row.lightBase' : 'row.persistFailed')
+                )
           );
         }
 
@@ -467,7 +506,7 @@
           PREVIOUS_KEY,
           BUILTIN_PREFERENCES,
           pair,
-          persistNotice
+          noticeFor
         }
       };
     }

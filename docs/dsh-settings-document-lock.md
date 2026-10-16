@@ -81,9 +81,11 @@ after unset value{preference:"system"}  user{}                  revision 2
 
 ## 五、下游案例（本机实际触发的现象）
 
-自研插件 `@local/rider-theme`（JetBrains Rider Dark 调色板）的配色走**插件自有 override layer**，不依赖设置文档，所以调色板总能生效；而「深色基座」依赖持久化偏好，必然失败。结果是 **深色 alias token 叠在浅色基座上**：`body[data-ds-dark-theme]` 缺失，代码高亮（`--shiki-*`）与结构性样式仍是浅色，看起来像「主题只应用了一半」。
+自研插件 `@local/rider-theme`（JetBrains Rider Dark 调色板）最初把配色挂在**插件自有 override layer** 上（不依赖设置文档，所以调色板总能生效），而「深色基座」依赖持久化偏好、必然失败 —— 结果就是 **深色 alias token 叠在浅色基座上**：`body[data-ds-dark-theme]` 缺失，代码高亮（`--shiki-*`）与结构性样式仍是浅色，看起来像「主题只应用了一半」。
 
-该插件已加兜底：写不进去时在设置行内给出可见告警（见 `rider-theme/client.js` 的 `persistNotice` 与 `rider-theme/design/test-persist-notice.mjs`），但这是**兜底而非修复**，根因仍在 DSH 侧。
+插件侧已改成**配色跟随基座**：只有 `active.colorScheme === 'dark'` 时才挂 override layer，点「浅色」自动撤层，因此不会再出现深浅混搭；基座为浅色时在设置行内给出可见提示，并区分两种成因 —— 用户主动选了浅色（`row.lightBase`），或偏好写入被拒（`row.persistFailed`，即本节这个故障）。实现见 `rider-theme/client.js` 的 `noticeFor` / `reconcile`，回归用例 `rider-theme/design/test-persist-notice.mjs`。
+
+需要强调的是：这是**插件侧的兜底**，不是修复 —— 只要 DSH 仍把用户设置存在「又会交给外部编辑器」的同一个文件里，任何设置写入都会继续静默失败，根因仍在 DSH 侧。
 
 ## 六、定位手法（可复用）
 

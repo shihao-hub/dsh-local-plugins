@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 /**
- * Regression test for the half-applied-palette notice in the rider-theme row.
+ * Regression test for the rider-theme row's appearance semantics.
  *
- * The palette rides a plugin-owned override layer, so it paints even when the
- * durable appearance preference cannot be written (the Host settings document is
- * unwritable while an editor holds the file). The base scheme then stays light
- * and only half the theme shows, which is what the row has to announce instead
- * of looking silently broken.
+ * The palette is dark-only and rides a plugin-owned override layer, so it may
+ * only paint while the base scheme is dark: the layer is mounted and withdrawn
+ * with `active.colorScheme`, which keeps Light/Dark/System coherent instead of
+ * leaving dark alias tokens under light structural rules. A light base while the
+ * switch is on has two causes the row must tell apart — the user picked Light
+ * (their newer intent wins, nothing is written), or the durable preference write
+ * was refused because the Host settings document is unwritable while another
+ * program holds the file open.
  *
  * The test drives the real client.js with hand-rolled React/theme/ctx stubs:
  * no DOM, no jsdom, no dependencies.
@@ -85,14 +88,18 @@ const loadPlugin = () => {
   return { module, React, localStorage };
 };
 
-/** Theme service facsimile: registry, override layers, snapshot and change events. */
+/** Theme service facsimile: registry, override layers, snapshot, writes and change events. */
 const createTheme = (THEME_ID) => {
   const listeners = new Set();
   const registered = new Set(['light', 'dark']);
+  const writes = [];
   const state = { snapshot: { preference: 'system', active: { id: 'light', colorScheme: 'light' } }, layers: 0 };
   return {
     get layers() {
       return state.layers;
+    },
+    get writes() {
+      return writes;
     },
     get preference() {
       return state.snapshot.preference;
@@ -114,10 +121,11 @@ const createTheme = (THEME_ID) => {
     },
     setTheme(id) {
       if (id !== 'system' && !registered.has(id)) throw new Error(`theme "${id}" is not registered`);
+      writes.push(id);
       state.snapshot = { preference: id, active: { id, colorScheme: id === THEME_ID || id === 'dark' ? 'dark' : 'light' } };
       for (const notify of listeners) notify(state.snapshot);
     },
-    /** Simulate ThemeRuntime.adopt() re-reading a durable preference that never moved. */
+    /** Simulate ThemeRuntime.adopt() re-reading whatever the durable preference is. */
     adopt(preference, colorScheme) {
       state.snapshot = { preference, active: { id: preference, colorScheme } };
       for (const notify of listeners) notify(state.snapshot);
@@ -192,19 +200,26 @@ const check = (label, pass) => {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${label}`);
 };
 
-const { module, React } = loadPlugin();
-const { persistNotice, THEME_ID } = module.__test;
+const { module, React, localStorage } = loadPlugin();
+const { noticeFor, THEME_ID, ENABLED_KEY } = module.__test;
 
-// 1. Verdict table: only "switch on + light base" is a defect.
-check('off + light base -> no notice', persistNotice(false, { active: { colorScheme: 'light' } }) === null);
-check('on + dark base -> no notice', persistNotice(true, { active: { colorScheme: 'dark' } }) === null);
+// 1. Verdict table: a light base while enabled is reported, and the two causes
+//    (the user picked Light vs. the preference write did not stick) stay apart.
+const snapshot = (colorScheme, preference) => ({ preference, active: { colorScheme } });
+check('off + light base -> no notice', noticeFor(false, snapshot('light', 'light')) === null);
+check('on + dark base -> no notice', noticeFor(true, snapshot('dark', 'dark')) === null);
+check('on + light base picked by the user -> light-base', noticeFor(true, snapshot('light', 'light')) === 'light-base');
 check(
-  'on + light base -> persist-failed',
-  persistNotice(true, { active: { colorScheme: 'light' } }) === 'persist-failed'
+  'on + light base after a refused write -> persist-failed',
+  noticeFor(true, snapshot('light', 'system')) === 'persist-failed'
+);
+check(
+  'on + dark base after adoption -> no notice',
+  noticeFor(true, snapshot('dark', 'dark')) === null
 );
 
-// 2. Wiring: a rejected preference write must surface the warning, and switching
-//    off (or a base that ends up dark) must take it back.
+// 2. Wiring: the layer follows the base scheme, so Light/Dark/System can never
+//    leave a dark palette under light structural rules.
 const theme = createTheme(THEME_ID);
 const { ctx, captured, dictionaries, missingKeys } = createContext(theme);
 module.apply(ctx);
@@ -213,28 +228,56 @@ const row = React.mount(captured.row);
 check('row starts without a warning', !treeHas(row.tree, isWarning));
 
 switchOf(row.tree).props.onClick();
-check('switch on keeps the layer applied', theme.layers === 1);
+check('switch on mounts the layer on the dark base', theme.layers === 1);
 check('applied preference targets rider-dark', theme.preference === THEME_ID);
 check('no warning while the base is dark', !treeHas(row.tree, isWarning));
 
-// The durable write is refused, so the runtime adopts the old preference again.
-theme.adopt('system', 'light');
-check('warning appears once the base falls back to light', treeHas(row.tree, isWarning));
+// The user then picks Light in the built-in Appearance row: newer intent wins.
+theme.adopt('light', 'light');
+check('picking Light withdraws the layer', theme.layers === 0);
+check('picking Light announces why the palette is off', treeHas(row.tree, isWarning));
 check(
-  'warning is announced as a live status',
+  'the notice is announced as a live status',
   treeHas(row.tree, (node) => isWarning(node) && node.props.role === 'status')
 );
-check('palette layer still applied in the half-applied state', theme.layers === 1);
+check('the user keeps their enable setting', localStorage.get(ENABLED_KEY) === '1');
+check('picking Light does not fight the user preference', theme.preference === 'light');
 
-// A later write that does land must clear the warning again.
+// Switching back to Dark brings the palette back with no extra interaction.
 theme.adopt('dark', 'dark');
-check('warning clears when the base becomes dark again', !treeHas(row.tree, isWarning));
+check('picking Dark re-mounts the layer', theme.layers === 1);
+check('picking Dark clears the notice', !treeHas(row.tree, isWarning));
 
+// A refused preference write: the runtime adopts the old durable preference, the
+// layer must come off rather than paint dark tokens on a light base.
+theme.adopt('system', 'light');
+check('a refused write withdraws the layer', theme.layers === 0);
+check('a refused write shows the persist-failed notice', treeHas(row.tree, isWarning));
+
+// Switching off stops writing a preference the user has since chosen.
+const writesBefore = theme.writes.length;
+theme.adopt('light', 'light');
 switchOf(row.tree).props.onClick();
-check('switching off removes the override layer', theme.layers === 0);
+check('switching off keeps the layer off', theme.layers === 0);
 check('switching off removes any warning', !treeHas(row.tree, isWarning));
+check('switching off leaves a user-chosen preference alone', theme.writes.length === writesBefore);
 
-// 3. Every key the row actually asked for must exist, in both languages.
+// 3. Loading the page with the switch remembered as ON must not overrule a Light
+//    the user picked since — the palette simply stays off until Dark is chosen.
+const lightTheme = createTheme(THEME_ID);
+lightTheme.adopt('light', 'light');
+localStorage.set(ENABLED_KEY, '1');
+const second = createContext(lightTheme);
+module.apply(second.ctx);
+const secondRow = React.mount(second.captured.row);
+check('reload with Light adopted writes no preference', lightTheme.writes.length === 0);
+check('reload with Light adopted mounts no layer', lightTheme.layers === 0);
+check('reload with Light adopted explains the state', treeHas(secondRow.tree, isWarning));
+switchOf(secondRow.tree).props.onClick();
+switchOf(secondRow.tree).props.onClick();
+check('flipping the switch on asks for the dark base', lightTheme.writes.includes('dark'));
+
+// 4. Every key the row actually asked for must exist, in both languages.
 check('every rendered row key resolves', missingKeys.length === 0);
 const tables = dictionaries.get('rider-theme') ?? {};
 const zhKeys = Object.keys(tables.zh ?? {}).sort();
