@@ -1,0 +1,23 @@
+{
+  "name": "@local/agy-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only Antigravity (agy) research delegation bridge for DeepSeek Harness: an MCP stdio server wrapping `agy -p ... --sandbox --mode plan --output-format json`.",
+  "exports": {
+    ".": "./package.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin/launch.mjs",
+    "server/agy_bridge_server.py",
+    "cordis.patch.yml",
+    "cordis.patch.resolved.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

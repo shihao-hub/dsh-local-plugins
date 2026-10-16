@@ -1,0 +1,21 @@
+# agy-bridge bundle patch: mounts the read-only agy MCP bridge.
+#
+# Relative path only — this file is what the package itself ships. DeepSeek
+# Harness cannot resolve a relative command path inside a patch row, so the
+# profile layer must use the resolved variant:
+#   cordis.patch.resolved.yml  (absolute node + launcher paths)
+#
+# The row id is `mcp-agy` to match the profile convention of every other MCP
+# client row (mcp-aoci, mcp-everything, ...).
+
+- insert:
+    - id: mcp-agy
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: agy
+        transport: stdio
+        command: node
+        args:
+          - bin/launch.mjs
+        # mcp-client 默认单次工具调用上限仅 60s；调研任务用 4 分钟
+        toolCallTimeoutMs: 240000

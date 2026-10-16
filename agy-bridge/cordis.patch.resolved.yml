@@ -1,0 +1,15 @@
+# agy-bridge resolved patch: absolute paths for installing into a profile's
+# own cordis.patch.yml (web / desktop). See agy-bridge/README.md for the
+# copy-paste procedure.
+
+- insert:
+    - id: mcp-agy
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: agy
+        transport: stdio
+        command: 'D:\nvm4w\nodejs\node.exe'
+        args:
+          - 'D:\Users\dsh-local-plugins\agy-bridge\bin\launch.mjs'
+        # mcp-client 默认单次工具调用上限仅 60s，而调研任务通常需数分钟
+        toolCallTimeoutMs: 240000

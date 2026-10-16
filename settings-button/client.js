@@ -36,6 +36,15 @@
         'button[aria-haspopup="dialog"]',
         'button'
       ];
+      /**
+       * 原生「直接打开设置」的回退触发器（settings-general 的 TriggerContent 按钮，
+       * aria-haspopup="dialog"）。web 端无账号菜单时底部显示的就是它，
+       * 与顶部新行完全重复，故由本插件隐藏；账号菜单触发器是 aria-haspopup="menu"，
+       * 绝不动它。
+       */
+      const FALLBACK_TRIGGER = SETTINGS_AREA + ' button[aria-haspopup="dialog"]';
+      /** 隐藏回退触发器时打在节点上的标记，合同失效（如账号菜单接管）时凭它精确还原。 */
+      const HIDDEN_MARK = 'data-settings-button-hidden';
       const MENU_SURFACE = '[data-menu-material]';
       const MENU_ITEM = 'button[role="menuitem"]';
 
@@ -118,6 +127,45 @@
         }
       }
 
+      /** 该按钮是否为「直接打开设置」的原生回退触发器（dialog 打开方式 + 设置文案）。 */
+      function isFallbackTrigger(node) {
+        if (node.getAttribute('aria-haspopup') !== 'dialog') return false;
+        const wanted = settingsLabels();
+        const label = (node.getAttribute('aria-label') || '').trim().toLowerCase();
+        if (label !== '') return wanted.some((candidate) => label.indexOf(candidate) === 0);
+        return textStartsWith(node, wanted);
+      }
+
+      /** 当前的原生回退触发器节点（可能已被本插件隐藏）。 */
+      function fallbackTrigger() {
+        if (typeof document === 'undefined') return null;
+        for (const node of Array.from(document.querySelectorAll(FALLBACK_TRIGGER))) {
+          if (isFallbackTrigger(node)) return node;
+        }
+        return null;
+      }
+
+      /**
+       * 隐藏原生回退触发器（底部那颗「设置」按钮）——只隐藏这一个按钮本身：
+       * 同一行的连接状态指示器、桌面更新徽标照常保留。账号菜单触发器（menu）
+       * 绝不触碰；一旦 DOM 合同不再满足（节点被替换、账号菜单接管），凭标记还原。
+       *
+       * 隐藏后依旧保留节点与事件：顶部新行点击时对该按钮编程点击（display:none
+       * 不阻挡 `click()`），设置照旧由原生 action 打开。
+       */
+      function hideFallbackTrigger() {
+        if (typeof document === 'undefined') return;
+        for (const node of Array.from(document.querySelectorAll('[' + HIDDEN_MARK + ']'))) {
+          if (node.isConnected && isFallbackTrigger(node)) continue;
+          node.style.display = '';
+          node.removeAttribute(HIDDEN_MARK);
+        }
+        const trigger = fallbackTrigger();
+        if (trigger === null) return;
+        if (trigger.style.display !== 'none') trigger.style.display = 'none';
+        trigger.setAttribute(HIDDEN_MARK, 'true');
+      }
+
       /** 菜单项候选：优先最后一个菜单面（刚打开的那一个）。 */
       function menuItems() {
         if (typeof document === 'undefined') return [];
@@ -147,6 +195,12 @@
         if (trigger === null) {
           console.warn('[settings-button] 未找到原生账号入口，点击已忽略。');
           return false;
+        }
+        // 回退触发器（web 无账号菜单时的底部「设置」按钮）直接就打开设置：
+        // 一次点击即达，无需再走菜单寻址；即使它已被本插件隐藏也能编程点击。
+        if (isFallbackTrigger(trigger)) {
+          trigger.click();
+          return true;
         }
         trigger.click();
         // 菜单由 React 在同一事件内挂载，通常可立即命中；未就绪则补两帧重试。
@@ -257,17 +311,31 @@
           if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') {
             return () => {};
           }
-          // 菜单是 portal 到 body 的：body 子节点一变就处理一次。
-          // MutationObserver 回调在渲染前执行，所以看不到「设置」项闪现。
-          const observer = new MutationObserver(() => {
+          // 菜单 portal 到 body、回退触发器深藏应用树内：subtree 监听覆盖深层重挂载，
+          // 每帧合并处理一次（requestAnimationFrame 在绘制前运行，看不到「设置」项闪现），
+          // 避免流式渲染的每一次 DOM 变更都全量扫描。
+          let scheduled = false;
+          const runSync = () => {
+            scheduled = false;
             hideAccountSettingsItem();
-          });
-          observer.observe(document.body, { childList: true });
-          hideAccountSettingsItem();
+            hideFallbackTrigger();
+          };
+          const scheduleSync = () => {
+            if (scheduled) return;
+            scheduled = true;
+            if (typeof window.requestAnimationFrame === 'function') {
+              window.requestAnimationFrame(runSync);
+            } else {
+              window.setTimeout(runSync, 16);
+            }
+          };
+          const observer = new MutationObserver(scheduleSync);
+          observer.observe(document.body, { childList: true, subtree: true });
+          runSync();
           return () => {
             observer.disconnect();
           };
-        }, 'settings-button: hide the native settings menu item');
+        }, 'settings-button: hide the native settings entry');
 
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'settings-button: dictionaries');
         t = ctx.locale.bind(NS);
@@ -306,11 +374,16 @@
           PANEL_ORDER,
           SETTINGS_AREA,
           TRIGGER_SELECTORS,
+          FALLBACK_TRIGGER,
+          HIDDEN_MARK,
           MENU_SURFACE,
           MENU_ITEM,
           SETTINGS_ITEM_LABELS,
           ACCOUNT_MENU_MARKERS,
           nativeTrigger,
+          isFallbackTrigger,
+          fallbackTrigger,
+          hideFallbackTrigger,
           menuItems,
           settingsMenuItem,
           hideAccountSettingsItem,

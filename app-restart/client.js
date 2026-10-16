@@ -155,12 +155,46 @@
       async function requestAction(action) {
         const status = await fetchJson(ROUTE + '/status', { method: 'GET', headers: { accept: 'application/json' } });
         if (!status || status.ok !== true || typeof status.token !== 'string') throw new Error('status payload invalid');
-        if (status.supported !== true) throw new Error('\u672a\u627e\u5230\u684c\u9762\u5e94\u7528\u7236\u8fdb\u7a0b / desktop app parent not found');
-        return fetchJson(ROUTE + '/' + action, {
+        if (status.supported !== true) throw new Error('\u672a\u627e\u5230\u53ef\u91cd\u542f\u7684 DSH \u8fdb\u7a0b / no restartable DSH process found');
+        const result = await fetchJson(ROUTE + '/' + action, {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-app-restart-token': status.token },
           body: '{}'
         });
+        // A web restart kills the very process serving this page, so the page
+        // can never observe the new instance unless it reconnects by itself.
+        // Without this the button would sit in "restarting" until the user
+        // reloads manually. Desktop restarts close the app instead, so the poll
+        // simply never fires there and the normal waiting phase is kept.
+        // Quit is deliberately excluded: that path leaves the service down, so
+        // polling could never succeed and would just spin for 90 seconds.
+        if (status.mode === 'web' && action === 'restart') {
+          void waitForWebRestart(status.port);
+        }
+        return result;
+      }
+
+      /**
+       * Announced while the service comes back, then reloads. Resolves (never
+       * rejects): by the time the socket dies, the response above is already in
+       * hand, so there is no user-visible error to report either way.
+       */
+      async function waitForWebRestart(port) {
+        const deadline = Date.now() + 90000;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          try {
+            const res = await fetch(ROUTE + '/status', { method: 'GET', headers: { accept: 'application/json' }, cache: 'no-store' });
+            if (!res.ok) continue;
+            const next = await res.json();
+            if (next && next.ok === true && (typeof port !== 'number' || next.port === port)) {
+              window.location.reload();
+              return;
+            }
+          } catch {
+            // Still down; keep waiting.
+          }
+        }
       }
 
       /**

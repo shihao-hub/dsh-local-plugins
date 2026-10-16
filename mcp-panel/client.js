@@ -20,6 +20,9 @@
         '.mcpx_title{margin:0;font-size:14px;font-weight:600;letter-spacing:-.01em}',
         '.mcpx_protocol{border:.5px solid var(--dsw-alias-border-l2);border-radius:4px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:16px;padding:0 5px;letter-spacing:.05em;flex:none}',
         '.mcpx_spacer{flex:1}',
+        '.mcpx_appRestartBtn{border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:11px;padding:3px 8px;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;line-height:1}',
+        '.mcpx_appRestartBtn:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}',
+        '.mcpx_appRestartBtn:disabled{opacity:.45;cursor:default}',
         '.mcpx_refresh{border:0;background:0 0;color:var(--dsw-alias-label-secondary);cursor:pointer;padding:4px;border-radius:6px;line-height:1;display:inline-flex;align-items:center;justify-content:center}',
         '.mcpx_refresh:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
         '.mcpx_refresh:disabled{opacity:.4;cursor:default}',
@@ -33,13 +36,27 @@
         '.mcpx_searchIcon{color:var(--dsw-alias-label-tertiary);display:flex;align-items:center;flex:none}',
         '.mcpx_searchInput{border:0;background:0 0;color:var(--dsw-alias-label-primary);font-size:12px;outline:0;width:100%;min-width:0}',
         '.mcpx_searchInput::placeholder{color:var(--dsw-alias-label-tertiary)}',
-        '.mcpx_server{background:var(--dsw-alias-bg-layer-1);border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}',
+        '.mcpx_server{background:var(--dsw-alias-bg-layer-1);border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;transition:opacity .15s ease}',
+        '.mcpx_server[data-disabled="true"]{opacity:.62;border-style:dashed}',
         '.mcpx_serverHead{display:flex;align-items:center;gap:7px;min-width:0}',
         '.mcpx_dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--dsw-alias-state-warn-primary)}',
         '.mcpx_dot[data-online="true"]{background:var(--dsw-alias-state-success-primary)}',
-        '.mcpx_name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;font-weight:650;flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+        '.mcpx_dot[data-online="false"]{background:var(--dsw-alias-label-tertiary)}',
+        '.mcpx_name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;font-weight:650;flex:none;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
         '.mcpx_transport{border:.5px solid var(--dsw-alias-border-l2);border-radius:4px;color:var(--dsw-alias-label-tertiary);font-size:9.5px;line-height:14px;padding:0 5px;letter-spacing:.06em;flex:none}',
-        '.mcpx_toolCount{margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:10.5px;font-variant-numeric:tabular-nums;flex:none}',
+        '.mcpx_badgeDisabled{border:.5px solid var(--dsw-alias-border-l2);border-radius:4px;color:var(--dsw-alias-label-tertiary);font-size:9.5px;line-height:14px;padding:0 5px;letter-spacing:.04em;flex:none;background:var(--dsw-alias-bg-layer-2)}',
+        '.mcpx_actions{margin-left:auto;display:inline-flex;align-items:center;gap:8px;flex:none}',
+        '.mcpx_iconBtn{border:0;background:0 0;color:var(--dsw-alias-label-secondary);cursor:pointer;padding:3px;border-radius:5px;line-height:1;display:inline-flex;align-items:center;justify-content:center}',
+        '.mcpx_iconBtn:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
+        '.mcpx_iconBtn:disabled{opacity:.4;cursor:default}',
+        '.mcpx_switch{position:relative;display:inline-flex;align-items:center;width:32px;height:18px;border-radius:9px;background:var(--dsw-alias-bg-layer-3,#3a3a3a);cursor:pointer;border:1px solid var(--dsw-alias-border-l1,#4a4a4a);transition:background .2s,border-color .2s;flex:none;padding:0;outline:0}',
+        '.mcpx_switch[data-checked="true"]{background:var(--dsw-alias-state-success-primary,#3bb346);border-color:transparent}',
+        '.mcpx_switchThumb{width:14px;height:14px;border-radius:50%;background:#fff;transition:transform .2s;transform:translateX(1px);box-shadow:0 1px 3px rgba(0,0,0,.3)}',
+        '.mcpx_switch[data-checked="true"] .mcpx_switchThumb{transform:translateX(15px)}',
+        '.mcpx_switch:disabled{opacity:.4;cursor:default}',
+        '.mcpx_spin{animation:mcpx-rotate .9s linear infinite}',
+        '@keyframes mcpx-rotate{to{transform:rotate(360deg)}}',
+        '.mcpx_toolCount{color:var(--dsw-alias-label-tertiary);font-size:10.5px;font-variant-numeric:tabular-nums;flex:none;min-width:14px;text-align:right}',
         '.mcpx_endpoint{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border-radius:6px;padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.mcpx_tools{border-top:.5px solid var(--dsw-alias-border-l1);padding-top:6px}',
         '.mcpx_toolsSummary{display:flex;align-items:center;gap:5px;cursor:pointer;list-style:none;color:var(--dsw-alias-label-secondary);font-size:11.5px;padding:2px 0;user-select:none}',
@@ -98,7 +115,17 @@
         'searchPlaceholder': '\u641c\u7d22\u5de5\u5177\u540d\u6216\u63cf\u8ff0\u2026',
         'noMatch': '\u6ca1\u6709\u5339\u914d\u7684\u670d\u52a1\u5668\u6216\u5de5\u5177',
         'paramsShort': '\u53c2',
-        'footer': 'MCP \u00b7 Model Context Protocol \u2014 \u5de5\u5177\u4ee5 mcp__\u670d\u52a1\u5668__\u540d\u79f0 \u6ce8\u5165\u4f1a\u8bdd'
+        'footer': 'MCP \u00b7 Model Context Protocol \u2014 \u5de5\u5177\u4ee5 mcp__\u670d\u52a1\u5668__\u540d\u79f0 \u6ce8\u5165\u4f1a\u8bdd',
+        'statusDisabled': '\u5df2\u505c\u7528',
+        'disabledHint': '\u8be5\u670d\u52a1\u5df2\u88ab\u624b\u52a8\u505c\u7528\uff0c\u5b50\u8fdb\u7a0b\u5df2\u9500\u6bc1\uff0c\u4e0d\u5360\u7528\u7cfb\u7edf\u5185\u5b58\u3002',
+        'restartServer': '\u70ed\u91cd\u542f\u6b64 MCP \u670d\u52a1',
+        'restartingServer': '\u6b63\u5728\u91cd\u542f\u6b64\u670d\u52a1\u2026',
+        'restartedServer': '\u670d\u52a1\u5df2\u5c31\u5730\u91cd\u542f',
+        'toggleEnable': '\u542f\u7528\u6b64\u670d\u52a1',
+        'toggleDisable': '\u505c\u7528\u6b64\u670d\u52a1',
+        'appRestartLabel': '\u91cd\u542f\u5e94\u7528\u4e0e Host',
+        'appRestartConfirm': '\u786e\u5b9a\u8981\u5e73\u6ed1\u91cd\u542f DeepSeek Harness \u5e94\u7528\u4e0e Host \u5417\uff1f',
+        'appRestarting': '\u6b63\u5728\u91cd\u542f\uff0c\u8bf7\u7a0d\u5019\u2026'
       };
 
       /** English dictionary, checked complete against the zh key set. */
@@ -133,10 +160,23 @@
         'searchPlaceholder': 'Search tools by name or description\u2026',
         'noMatch': 'No matching servers or tools',
         'paramsShort': 'p',
-        'footer': 'MCP \u00b7 Model Context Protocol \u2014 tools join sessions as mcp__server__name'
+        'footer': 'MCP \u00b7 Model Context Protocol \u2014 tools join sessions as mcp__server__name',
+        'statusDisabled': 'Disabled',
+        'disabledHint': 'This server is manually disabled, child processes terminated and consumes no system memory.',
+        'restartServer': 'Hot-restart this MCP server',
+        'restartingServer': 'Restarting server\u2026',
+        'restartedServer': 'Server restarted in-place',
+        'toggleEnable': 'Enable server',
+        'toggleDisable': 'Disable server',
+        'appRestartLabel': 'Restart App & Host',
+        'appRestartConfirm': 'Restart DeepSeek Harness app and host smoothly?',
+        'appRestarting': 'Restarting, please wait\u2026'
       };
 
       //#region data access
+      const ROUTE_TOGGLE = '/plugin/mcp-panel/toggle';
+      const ROUTE_RESTART = '/plugin/mcp-panel/restart-server';
+
       async function loadCatalog(signal) {
         const res = await fetch(ROUTE, { method: 'GET', headers: { accept: 'application/json' }, signal });
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -144,6 +184,30 @@
         if (data === null || typeof data !== 'object' || data.ok !== true || !Array.isArray(data.servers)) {
           throw new Error('unexpected catalog payload');
         }
+        return data;
+      }
+
+      async function toggleMcpServer(entryId, enabled) {
+        const res = await fetch(ROUTE_TOGGLE, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ entryId, enabled })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        if (!data || data.ok !== true) throw new Error(data?.error ?? 'toggle failed');
+        return data;
+      }
+
+      async function restartMcpServer(entryId) {
+        const res = await fetch(ROUTE_RESTART, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ entryId })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        if (!data || data.ok !== true) throw new Error(data?.error ?? 'restart failed');
         return data;
       }
 
@@ -254,15 +318,92 @@
         );
       }
 
+      /** Circular-arrow glyph used for refresh and restart actions. */
+      function ReloadGlyph(props) {
+        return h(
+          'svg',
+          {
+            className: props?.spinning ? 'mcpx_spin' : undefined,
+            width: typeof props?.size === 'number' ? props.size : 13,
+            height: typeof props?.size === 'number' ? props.size : 13,
+            viewBox: '0 0 16 16',
+            fill: 'none',
+            focusable: 'false',
+            'aria-hidden': 'true',
+            style: { display: 'block' }
+          },
+          h('path', {
+            d: 'M13.2 8a5.2 5.2 0 1 1-1.52-3.68',
+            stroke: 'currentColor',
+            strokeWidth: 1.4,
+            strokeLinecap: 'round'
+          }),
+          h('path', {
+            d: 'M13.5 3.5v3.2H10.3',
+            stroke: 'currentColor',
+            strokeWidth: 1.4,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round'
+          })
+        );
+      }
+
+      /** Accessible switch control component. */
+      function SwitchControl(props) {
+        const checked = props.checked === true;
+        const disabled = props.disabled === true;
+        const title = props.title;
+        const onChange = props.onChange;
+        return h(
+          'button',
+          {
+            type: 'button',
+            role: 'switch',
+            className: 'mcpx_switch',
+            'aria-checked': checked ? 'true' : 'false',
+            'data-checked': checked ? 'true' : 'false',
+            disabled,
+            title,
+            onClick: function (e) {
+              e.stopPropagation();
+              if (!disabled && typeof onChange === 'function') {
+                onChange(!checked);
+              }
+            }
+          },
+          h('span', { className: 'mcpx_switchThumb' })
+        );
+      }
+
       /** One configured MCP server: identity, endpoint, live tools, config facts. */
       function ServerCard(props) {
         const server = props.server;
         const t = props.t;
         const searching = props.searching === true;
-        const online = server.tools.length > 0;
+        const disabled = server.disabled === true;
+        const online = !disabled && server.tools.length > 0;
         const endpoint = endpointOf(server);
         const memory = server.memory;
-        const memoryText = formatBytes(memory?.bytes);
+        const memoryText = disabled ? undefined : formatBytes(memory?.bytes);
+        const [busyOp, setBusyOp] = React.useState(null);
+
+        const handleToggle = function (nextEnabled) {
+          if (!server.entryId || busyOp !== null) return;
+          setBusyOp('toggle');
+          props.onToggle(server.entryId, nextEnabled).finally(function () {
+            setBusyOp(null);
+          });
+        };
+
+        const handleRestart = function (e) {
+          e.stopPropagation();
+          if (!server.entryId || busyOp !== null) return;
+          setBusyOp('restart');
+          props.onRestart(server.entryId).finally(function () {
+            setBusyOp(null);
+          });
+        };
+
         const meta = [];
         if (memoryText !== undefined) {
           meta.push({
@@ -291,7 +432,11 @@
 
         return h(
           'section',
-          { className: 'mcpx_server', 'aria-label': server.serverName },
+          {
+            className: 'mcpx_server',
+            'aria-label': server.serverName,
+            'data-disabled': disabled ? 'true' : 'false'
+          },
           h(
             'div',
             { className: 'mcpx_serverHead' },
@@ -299,18 +444,46 @@
               className: 'mcpx_dot',
               'data-online': online ? 'true' : 'false',
               role: 'img',
-              'aria-label': online ? t('online') : t('idle')
+              'aria-label': disabled ? t('statusDisabled') : online ? t('online') : t('idle')
             }),
             h('span', { className: 'mcpx_name', title: server.serverName }, server.serverName),
             h('span', { className: 'mcpx_transport' }, server.transport === 'streamable-http' ? t('http') : t('stdio')),
-            h('span', { className: 'mcpx_toolCount' }, String(server.tools.length))
+            disabled ? h('span', { className: 'mcpx_badgeDisabled' }, t('statusDisabled')) : null,
+            h(
+              'div',
+              { className: 'mcpx_actions' },
+              server.entryId !== undefined
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'mcpx_iconBtn',
+                      title: busyOp === 'restart' ? t('restartingServer') : t('restartServer'),
+                      disabled: busyOp !== null || props.busyGlobal === true,
+                      onClick: handleRestart
+                    },
+                    h(ReloadGlyph, { spinning: busyOp === 'restart' })
+                  )
+                : null,
+              server.entryId !== undefined
+                ? h(SwitchControl, {
+                    checked: !disabled,
+                    disabled: busyOp !== null || props.busyGlobal === true,
+                    title: disabled ? t('toggleEnable') : t('toggleDisable'),
+                    onChange: handleToggle
+                  })
+                : null,
+              h('span', { className: 'mcpx_toolCount' }, String(server.tools.length))
+            )
           ),
           endpoint !== undefined
             ? h('div', { className: 'mcpx_endpoint', title: endpoint }, endpoint)
             : null,
-          online === false
-            ? h('div', { className: 'mcpx_meta' }, h('span', { className: 'mcpx_metaItem' }, t('idleHint')))
-            : null,
+          disabled
+            ? h('div', { className: 'mcpx_meta' }, h('span', { className: 'mcpx_metaItem' }, t('disabledHint')))
+            : online === false
+              ? h('div', { className: 'mcpx_meta' }, h('span', { className: 'mcpx_metaItem' }, t('idleHint')))
+              : null,
           server.tools.length > 0
             ? h(
                 'details',
@@ -361,12 +534,26 @@
       /** The 接口 (MCP) panel: server catalog joined with live tool facts. */
       function McpPanel(props) {
         const t = props.t;
-        const loadCatalogFace = props.loadCatalog;
+        const loadCatalogFace = props.loadCatalog ?? loadCatalog;
+        const toggleServerFace = props.toggleServer ?? toggleMcpServer;
+        const restartServerFace = props.restartServer ?? restartMcpServer;
 
         const [reload, setReload] = React.useState(0);
         const [query, setQuery] = React.useState('');
         const [state, setState] = React.useState({ status: 'loading', data: undefined, error: undefined });
         const [busy, setBusy] = React.useState(false);
+        const [appRestartSupported, setAppRestartSupported] = React.useState(false);
+        const [appRestarting, setAppRestarting] = React.useState(false);
+
+        // Probe app-restart capability
+        React.useEffect(() => {
+          fetch('/plugin/app-restart/status')
+            .then((r) => (r.ok ? r.json() : undefined))
+            .then((d) => {
+              if (d && d.ok && d.supported) setAppRestartSupported(true);
+            })
+            .catch(() => {});
+        }, []);
 
         React.useEffect(() => {
           const controller = new AbortController();
@@ -392,10 +579,54 @@
           };
         }, [reload, loadCatalogFace]);
 
+        const handleToggle = React.useCallback(async (entryId, enabled) => {
+          await toggleServerFace(entryId, enabled);
+          setReload((r) => r + 1);
+        }, [toggleServerFace]);
+
+        const handleRestart = React.useCallback(async (entryId) => {
+          await restartServerFace(entryId);
+          setReload((r) => r + 1);
+        }, [restartServerFace]);
+
+        const handleAppRestart = React.useCallback(async () => {
+          if (!window.confirm(t('appRestartConfirm'))) return;
+          try {
+            setAppRestarting(true);
+            const statusRes = await fetch('/plugin/app-restart/status');
+            const statusData = await statusRes.json();
+            if (!statusData || !statusData.token) throw new Error('no token');
+            await fetch('/plugin/app-restart/restart', {
+              method: 'POST',
+              headers: { 'x-app-restart-token': statusData.token }
+            });
+            // Poll until port comes back up
+            const pollStart = Date.now();
+            const pollTimer = setInterval(async () => {
+              if (Date.now() - pollStart > 45000) {
+                clearInterval(pollTimer);
+                setAppRestarting(false);
+                return;
+              }
+              try {
+                const probe = await fetch('/plugin/mcp-panel/catalog');
+                if (probe.ok) {
+                  clearInterval(pollTimer);
+                  window.location.reload();
+                }
+              } catch {
+                // waiting for restart
+              }
+            }, 1000);
+          } catch {
+            setAppRestarting(false);
+          }
+        }, [t]);
+
         const servers = state.data !== undefined ? state.data.servers : [];
         const visible = servers.filter((server) => matchesQuery(server, query));
         const totalTools = servers.reduce((sum, server) => sum + server.tools.length, 0);
-        const onlineCount = servers.filter((server) => server.tools.length > 0).length;
+        const onlineCount = servers.filter((server) => !server.disabled && server.tools.length > 0).length;
         const searching = query.trim() !== '';
 
         let body;
@@ -431,6 +662,9 @@
               server,
               tools: filterServerTools(server, query),
               searching,
+              busyGlobal: busy,
+              onToggle: handleToggle,
+              onRestart: handleRestart,
               t
             })
           );
@@ -448,6 +682,20 @@
             h('h1', { className: 'mcpx_title' }, t('title')),
             h('span', { className: 'mcpx_protocol' }, t('protocol')),
             h('span', { className: 'mcpx_spacer' }),
+            appRestartSupported
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'mcpx_appRestartBtn',
+                    title: t('appRestartLabel'),
+                    disabled: appRestarting || busy,
+                    onClick: handleAppRestart
+                  },
+                  h(ReloadGlyph, { spinning: appRestarting, size: 12 }),
+                  h('span', null, appRestarting ? t('appRestarting') : t('appRestartLabel'))
+                )
+              : null,
             h(
               'button',
               {

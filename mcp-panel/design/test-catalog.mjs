@@ -4,6 +4,7 @@
  * helpers (through a stubbed module loader). Run: node design/test-catalog.mjs
  */
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 
 process.exitCode = 1;
 
@@ -11,21 +12,64 @@ process.exitCode = 1;
 const { apply, __test: hostTest } = await import('../index.js');
 assert.ok(hostTest, 'host __test exports present');
 
-let route;
+const routes = new Map();
+const mockEntries = [
+  {
+    options: {
+      id: 'mcp-argo',
+      name: '@deepseek-ai/dsh-mcp-client',
+      config: {
+        serverName: 'argo',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', 'github:taxueseek/argo'],
+        env: { A: '1', B: '2' },
+        toolCallTimeoutMs: 60000
+      }
+    },
+    disabled: false,
+    updateCalls: [],
+    async update(opts) {
+      this.updateCalls.push(opts);
+      if (typeof opts.disabled === 'boolean') this.disabled = opts.disabled;
+    }
+  },
+  {
+    options: {
+      id: 'mcp-everything',
+      name: '@deepseek-ai/dsh-mcp-client',
+      config: {
+        serverName: 'everything',
+        transport: 'stdio',
+        command: 'uvx',
+        args: ['everything-mcp'],
+        reconnect: { enabled: false }
+      }
+    },
+    disabled: false,
+    updateCalls: [],
+    async update(opts) {
+      this.updateCalls.push(opts);
+      if (typeof opts.disabled === 'boolean') this.disabled = opts.disabled;
+    }
+  },
+  {
+    options: { id: 'unrelated', name: '@deepseek-ai/dsh-web', config: {} },
+    disabled: false,
+    async update() {}
+  }
+];
+
 const ctx = {
   effect(fn) { fn(); },
-  webServer: { register: (r) => { route = r; return () => {}; } },
+  webServer: {
+    register: (r) => {
+      routes.set(r.path, r);
+      return () => { routes.delete(r.path); };
+    }
+  },
   loader: {
-    entries: () => [
-      { options: { id: 'mcp-argo', name: '@deepseek-ai/dsh-mcp-client', config: {
-        serverName: 'argo', transport: 'stdio', command: 'npx', args: ['-y', 'github:taxueseek/argo'],
-        env: { A: '1', B: '2' }, toolCallTimeoutMs: 60000
-      } } },
-      { options: { id: 'mcp-everything', name: '@deepseek-ai/dsh-mcp-client', config: {
-        serverName: 'everything', transport: 'stdio', command: 'uvx', args: ['everything-mcp'], reconnect: { enabled: false }
-      } } },
-      { options: { id: 'unrelated', name: '@deepseek-ai/dsh-web', config: {} } }
-    ]
+    entries: () => mockEntries
   },
   tools: {
     schemas: () => [
@@ -37,41 +81,65 @@ const ctx = {
 };
 
 apply(ctx);
-assert.equal(route.path, '/plugin/mcp-panel/catalog');
-assert.equal(route.kind, 'exact');
+assert.equal(routes.has('/plugin/mcp-panel/catalog'), true);
+assert.equal(routes.has('/plugin/mcp-panel/toggle'), true);
+assert.equal(routes.has('/plugin/mcp-panel/restart-server'), true);
 
-/** Node-style response capture. */
-function fakeRes() {
+const catalogRoute = routes.get('/plugin/mcp-panel/catalog');
+assert.equal(catalogRoute.kind, 'exact');
+
+/** Node-style response capture helper. */
+function callHandler(handler, req) {
   return new Promise((resolve) => {
+    let resolved = false;
     const res = {
       headersSent: false,
       writableEnded: false,
       writeHead(status, headers) { this.status = status; this.headers = headers; },
-      end(payload) { this.writableEnded = true; resolve({ status: this.status, payload: JSON.parse(payload) }); }
+      end(payload) {
+        this.writableEnded = true;
+        if (!resolved) {
+          resolved = true;
+          let parsed = payload;
+          try { parsed = JSON.parse(payload); } catch {}
+          resolve({ status: this.status, payload: parsed });
+        }
+      }
     };
-    resolve.res = res;
+    handler(req, res).catch((err) => {
+      if (!resolved) {
+        resolved = true;
+        resolve({ status: 500, error: err });
+      }
+    });
   });
 }
 
-let settle;
-const done = new Promise((resolve) => { settle = resolve; });
-const res = {
-  headersSent: false,
-  writableEnded: false,
-  writeHead(status) { this.status = status; },
-  end(payload) { this.writableEnded = true; settle({ status: this.status, payload: JSON.parse(payload) }); }
-};
-await route.handler({ method: 'GET' }, res);
-const { status, payload } = await done;
-assert.equal(status, 200);
-assert.equal(payload.ok, true);
-assert.equal(typeof payload.hostPid, 'number');
-assert.equal(typeof payload.memoryProbed, 'boolean');
-assert.equal(payload.servers.length, 2);
+function createStreamReq(method, headers, bodyObj) {
+  const req = new EventEmitter();
+  req.method = method;
+  req.headers = headers || {};
+  process.nextTick(() => {
+    if (bodyObj !== undefined) {
+      req.emit('data', JSON.stringify(bodyObj));
+    }
+    req.emit('end');
+  });
+  return req;
+}
 
-const argo = payload.servers.find((s) => s.serverName === 'argo');
+// 1. GET catalog
+const catRes = await callHandler(catalogRoute.handler, { method: 'GET' });
+assert.equal(catRes.status, 200);
+assert.equal(catRes.payload.ok, true);
+assert.equal(typeof catRes.payload.hostPid, 'number');
+assert.equal(typeof catRes.payload.memoryProbed, 'boolean');
+assert.equal(catRes.payload.servers.length, 2);
+
+const argo = catRes.payload.servers.find((s) => s.serverName === 'argo');
 assert.equal(argo.transport, 'stdio');
 assert.equal(argo.command, 'npx');
+assert.equal(argo.disabled, false);
 assert.equal(argo.envCount, 2);
 assert.equal(argo.toolCallTimeoutMs, 60000);
 assert.equal(argo.reconnect.enabled, true);
@@ -80,17 +148,56 @@ assert.deepEqual(argo.tools.map((t) => t.name), ['mcp__argo__argo_fetch', 'mcp__
 assert.equal(argo.tools[1].params, 2);
 assert.equal(argo.tools[1].required, 1);
 
-const everything = payload.servers.find((s) => s.serverName === 'everything');
+const everything = catRes.payload.servers.find((s) => s.serverName === 'everything');
 assert.equal(everything.tools.length, 0);
+assert.equal(everything.disabled, false);
 assert.equal(everything.reconnect.enabled, false);
-assert.ok(payload.servers.indexOf(argo) < payload.servers.indexOf(everything), 'tools-bearing servers sort first');
+assert.ok(catRes.payload.servers.indexOf(argo) < catRes.payload.servers.indexOf(everything), 'tools-bearing servers sort first');
 
-// POST is refused
-const post = await new Promise((resolve) => {
-  const r2 = { headersSent: false, writableEnded: false, writeHead(s) { this.status = s; }, end(p) { resolve({ status: this.status, body: p }); } };
-  route.handler({ method: 'POST' }, r2);
-});
-assert.equal(post.status, 405);
+// Method guard
+const postCat = await callHandler(catalogRoute.handler, { method: 'POST' });
+assert.equal(postCat.status, 405);
+
+// 2. POST toggle route
+const toggleRoute = routes.get('/plugin/mcp-panel/toggle');
+const toggleRes = await callHandler(
+  toggleRoute.handler,
+  createStreamReq('POST', {}, { entryId: 'mcp-argo', enabled: false })
+);
+assert.equal(toggleRes.status, 200);
+assert.equal(toggleRes.payload.ok, true);
+assert.equal(toggleRes.payload.entryId, 'mcp-argo');
+assert.equal(toggleRes.payload.enabled, false);
+assert.equal(mockEntries[0].disabled, true);
+
+// 3. POST restart-server route
+const restartRoute = routes.get('/plugin/mcp-panel/restart-server');
+const restartRes = await callHandler(
+  restartRoute.handler,
+  createStreamReq('POST', {}, { entryId: 'mcp-argo' })
+);
+assert.equal(restartRes.status, 200);
+assert.equal(restartRes.payload.ok, true);
+assert.equal(restartRes.payload.status, 'restarted');
+assert.equal(mockEntries[0].disabled, false);
+
+// 4. YAML persistence helper unit test
+const sampleYaml = [
+  '# comment 1',
+  '- insert:',
+  '    - id: mcp-test',
+  '      name: \'@deepseek-ai/dsh-mcp-client\'',
+  '      config:',
+  '        serverName: test',
+  '        command: node'
+].join('\n');
+const patched1 = hostTest.updateYamlEntryDisabled(sampleYaml, 'mcp-test', true);
+assert.equal(patched1.changed, true);
+assert.ok(patched1.content.includes('disabled: true'));
+const patched2 = hostTest.updateYamlEntryDisabled(patched1.content, 'mcp-test', false);
+assert.equal(patched2.changed, true);
+assert.ok(!patched2.content.includes('disabled: true'));
+
 console.log('host half OK');
 //#endregion
 
@@ -102,7 +209,12 @@ const registration = captured[0];
 assert.equal(registration.id, '@local/mcp-panel');
 const plugin = registration.factory((spec) => {
   assert.equal(spec, 'react');
-  return { createElement: (...args) => args };
+  return {
+    createElement: (...args) => args,
+    useState: (v) => [v, () => {}],
+    useEffect: () => {},
+    useCallback: (fn) => fn
+  };
 });
 assert.deepEqual(plugin.inject, ['slots', 'locale']);
 assert.equal(typeof plugin.apply, 'function');
@@ -170,6 +282,24 @@ assert.equal(everythingMem.bytes, 126 * MB);
 const argoMem = hostTest.serverMemoryFootprint(descendants, { command: 'npx', args: ['-y', 'github:taxueseek/argo'] });
 assert.equal(argoMem.processes, 3, 'npx chain');
 assert.equal(argoMem.bytes, 53 * MB);
+
+// Regression: servers sharing one command (`node.exe`) must not sum one
+// another's subtrees — each row counts only its own wrapper chain.
+const procs2 = [
+  { ProcessId: 100, ParentProcessId: 1, WorkingSetSize: 500 * MB, ExecutablePath: 'C:\\x\\node.exe', CommandLine: 'node host-runtime.js' },
+  { ProcessId: 210, ParentProcessId: 100, WorkingSetSize: 140 * MB, ExecutablePath: 'C:\\x\\node.exe', CommandLine: 'D:\\x\\node.exe D:\\x\\chrome-devtools-mcp\\build\\bin\\chrome-devtools-mcp.js' },
+  { ProcessId: 220, ParentProcessId: 100, WorkingSetSize: 60 * MB, ExecutablePath: 'C:\\x\\node.exe', CommandLine: 'D:\\x\\node.exe D:\\Users\\dsh-local-plugins\\agy-bridge\\bin\\launch.mjs' },
+  { ProcessId: 221, ParentProcessId: 220, WorkingSetSize: 17 * MB, ExecutablePath: 'C:\\x\\python.exe', CommandLine: 'python agy_bridge_server.py' },
+  { ProcessId: 230, ParentProcessId: 100, WorkingSetSize: 66 * MB, ExecutablePath: 'C:\\x\\node.exe', CommandLine: 'node unrelated-service.js' }
+];
+const descendants2 = hostTest.descendantProcesses(procs2, 100);
+const cdMem = hostTest.serverMemoryFootprint(descendants2, { command: 'D:\\x\\node.exe', args: ['D:\\x\\chrome-devtools-mcp\\build\\bin\\chrome-devtools-mcp.js'] });
+assert.equal(cdMem.processes, 1, 'chrome-devtools counts only its own wrapper');
+assert.equal(cdMem.bytes, 140 * MB);
+const agyMem = hostTest.serverMemoryFootprint(descendants2, { command: 'D:\\x\\node.exe', args: ['D:\\Users\\dsh-local-plugins\\agy-bridge\\bin\\launch.mjs'] });
+assert.equal(agyMem.processes, 2, 'agy wrapper + its python child');
+assert.equal(agyMem.bytes, 77 * MB);
+assert.notEqual(cdMem.bytes, agyMem.bytes, 'same-command servers never share one union');
 
 assert.equal(hostTest.serverMemoryFootprint(descendants, { command: 'missing-tool.exe', args: [] }), undefined);
 assert.equal(hostTest.basenameOf('C:\\A\\B\\tool.EXE'), 'tool.exe');
