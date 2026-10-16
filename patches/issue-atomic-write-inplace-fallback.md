@@ -61,6 +61,30 @@ A bounded retry is the right answer for transient interference (indexer, AV, a w
 lets go). It cannot help against a handle that stays open for the lifetime of an editor
 session: the retry budget is spent in ~1.3 s, and the next write starts over from zero.
 
+## API note that changes the shape of the fix
+
+Measured on the same held document (four controlled arms, all reproduced in a lab):
+
+| Holder | exclusive open | write open | DELETE open | `MoveFileEx(REPLACE_EXISTING)` |
+|---|---|---|---|---|
+| live case (editor) | refused (32) | allowed | allowed | **fails, Win32 5** |
+| mapped view only (file handle closed) | free | allowed | allowed | succeeds |
+| mapped view + file handle | refused (32) | allowed | allowed | fails, Win32 5 |
+| plain handle, share=READ\|WRITE\|DELETE | refused (32) | allowed | allowed | **fails, Win32 5** |
+| plain handle, share without DELETE | refused (32) | allowed | refused (32) | fails, Win32 5 |
+
+So the live holder is an ordinary file handle, and `MoveFileEx(REPLACE_EXISTING)` refuses the
+replacement **even though the holder shares `FILE_SHARE_DELETE`** — Node's `fs.rename` maps to
+exactly that call, which is why the commit step has no way out today. `ReplaceFileW`, the API
+Windows provides for replacing a file another process has open, **succeeded on the same held
+document**, and so does freeing the name first (`DeleteFile` then `MoveFile`).
+
+That means a native commit path could keep the atomic replacement instead of degrading to the
+in-place fallback proposed above. A JS-only module cannot reach `ReplaceFileW`, so the fallback
+below remains the practical answer for this package; if a native binding is acceptable, prefer
+routing the commit through `ReplaceFileW` and keep the fallback only for holders that do not
+share delete (then `DeleteFile` fails too).
+
 ## Proposal
 
 1. **Keep the content even when the replacement is refused.** After the retries are
