@@ -1,0 +1,3 @@
+- insert:
+    - id: open-with-default-app
+      name: '@local/open-with-default-app'
