@@ -76,6 +76,8 @@ const loadPlugin = () => {
       setItem: (key, value) => localStorage.set(key, String(value)),
       removeItem: (key) => localStorage.delete(key)
     },
+    setTimeout: (callback, ms) => setTimeout(callback, ms),
+    clearTimeout: (handle) => clearTimeout(handle),
     __ModuleLoader__: { load: (mod) => (module = mod.factory(require)) }
   };
   const require = (id) => {
@@ -93,6 +95,10 @@ const createTheme = (THEME_ID) => {
   const listeners = new Set();
   const registered = new Set(['light', 'dark']);
   const writes = [];
+  const hostWrites = [];
+  // The settings document as the Host would report it: the only place a preference
+  // can actually be stored, so it decides whether a write landed or was refused.
+  const document = { preference: 'system' };
   const state = { snapshot: { preference: 'system', active: { id: 'light', colorScheme: 'light' } }, layers: 0 };
   return {
     get layers() {
@@ -101,6 +107,18 @@ const createTheme = (THEME_ID) => {
     get writes() {
       return writes;
     },
+    /** Writes that would reach the settings document (builtin preferences only). */
+    get hostWrites() {
+      return hostWrites;
+    },
+    get documentPreference() {
+      return document.preference;
+    },
+    /** Simulate the Host storing (or refusing to store) a preference. */
+    store(preference) {
+      document.preference = preference;
+    },
+    getSnapshot: () => ({ value: { preference: document.preference, fontSize: 14 } }),
     get preference() {
       return state.snapshot.preference;
     },
@@ -122,6 +140,9 @@ const createTheme = (THEME_ID) => {
     setTheme(id) {
       if (id !== 'system' && !registered.has(id)) throw new Error(`theme "${id}" is not registered`);
       writes.push(id);
+      // Only builtin preferences reach the Host settings document; a registered
+      // theme id is a client-only switch (that is what keeps `assertDark` loop-free).
+      if (id === 'light' || id === 'dark' || id === 'system') hostWrites.push(id);
       state.snapshot = { preference: id, active: { id, colorScheme: id === THEME_ID || id === 'dark' ? 'dark' : 'light' } };
       for (const notify of listeners) notify(state.snapshot);
     },
@@ -141,8 +162,10 @@ const createContext = (theme) => {
   const captured = { row: null };
   const dictionaries = new Map();
   const missingKeys = [];
+  const services = { theme, configForms: { get: () => theme } };
   const ctx = {
     theme,
+    get: (name) => services[name],
     slots: {
       inject: (_slot, register) => register(),
       register: (_options, component) => {
@@ -184,6 +207,16 @@ const treeHas = (node, predicate) => {
 };
 
 const isWarning = (node) => typeof node.props?.className === 'string' && node.props.className.includes('rdt_warn');
+/** Text of the first rendered warning line, or null when the row renders none. */
+const warningText = (node) => {
+  if (node === null || typeof node !== 'object') return null;
+  if (!Array.isArray(node) && isWarning(node)) return node.children[0];
+  for (const child of Array.isArray(node) ? node : node.children ?? []) {
+    const found = warningText(child);
+    if (found !== null) return found;
+  }
+  return null;
+};
 const switchOf = (node) => {
   if (node === null || typeof node !== 'object') return null;
   if (!Array.isArray(node) && node.props?.role === 'switch') return node;
@@ -199,32 +232,30 @@ const check = (label, pass) => {
   checks.push({ label, pass });
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${label}`);
 };
+const settle = (ms = 750) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const { module, React, localStorage } = loadPlugin();
-const { noticeFor, THEME_ID, ENABLED_KEY } = module.__test;
+const { noticeFor, NOTICE_KEYS, THEME_ID, ENABLED_KEY } = module.__test;
 
-// 1. Verdict table: a light base while enabled is reported, and the two causes
-//    (the user picked Light vs. the preference write did not stick) stay apart.
+// 1. Verdict table: only "switch on and not painting" states carry a notice, and
+//    the notice depends on whether a write was actually observed to fail.
 const snapshot = (colorScheme, preference) => ({ preference, active: { colorScheme } });
-check('off + light base -> no notice', noticeFor(false, snapshot('light', 'light')) === null);
-check('on + dark base -> no notice', noticeFor(true, snapshot('dark', 'dark')) === null);
-check('on + light base picked by the user -> light-base', noticeFor(true, snapshot('light', 'light')) === 'light-base');
-check(
-  'on + light base after a refused write -> persist-failed',
-  noticeFor(true, snapshot('light', 'system')) === 'persist-failed'
-);
-check(
-  'on + dark base after adoption -> no notice',
-  noticeFor(true, snapshot('dark', 'dark')) === null
-);
+check('off + light base -> no notice', noticeFor(false, false, snapshot('light', 'light')) === null);
+check('on + dark base -> no notice', noticeFor(true, false, snapshot('dark', 'dark')) === null);
+check('on + light base, nothing refused -> light-base', noticeFor(true, false, snapshot('light', 'light')) === 'light-base');
+check('on + dark base after a refusal -> not-saved', noticeFor(true, true, snapshot('dark', 'dark')) === 'not-saved');
+check('on + light base after a refusal -> persist-failed', noticeFor(true, true, snapshot('light', 'system')) === 'persist-failed');
+check('every notice key has row copy', Object.values(NOTICE_KEYS).every((key) => typeof key === 'string'));
 
 // 2. Wiring: the layer follows the base scheme, so Light/Dark/System can never
-//    leave a dark palette under light structural rules.
+//    leave a dark palette under light structural rules — and a write the document
+//    refuses must not bounce the user off the dark base.
 const theme = createTheme(THEME_ID);
 const { ctx, captured, dictionaries, missingKeys } = createContext(theme);
 module.apply(ctx);
 if (captured.row === null) throw new Error('the row was not registered into settings.general.item');
 const row = React.mount(captured.row);
+const zhTable = (dictionaries.get('rider-theme') ?? {}).zh ?? {};
 check('row starts without a warning', !treeHas(row.tree, isWarning));
 
 switchOf(row.tree).props.onClick();
@@ -232,10 +263,17 @@ check('switch on mounts the layer on the dark base', theme.layers === 1);
 check('applied preference targets rider-dark', theme.preference === THEME_ID);
 check('no warning while the base is dark', !treeHas(row.tree, isWarning));
 
+// The Host accepted the write: the document holds `dark`, which confirms it.
+theme.store('dark');
+theme.adopt('dark', 'dark');
+await settle();
+check('a confirmed write is not mistaken for a refusal', !treeHas(row.tree, isWarning));
+
 // The user then picks Light in the built-in Appearance row: newer intent wins.
+theme.store('light');
 theme.adopt('light', 'light');
 check('picking Light withdraws the layer', theme.layers === 0);
-check('picking Light announces why the palette is off', treeHas(row.tree, isWarning));
+check('picking Light announces why the palette is off', warningText(row.tree) === zhTable['row.lightBase']);
 check(
   'the notice is announced as a live status',
   treeHas(row.tree, (node) => isWarning(node) && node.props.role === 'status')
@@ -244,27 +282,43 @@ check('the user keeps their enable setting', localStorage.get(ENABLED_KEY) === '
 check('picking Light does not fight the user preference', theme.preference === 'light');
 
 // Switching back to Dark brings the palette back with no extra interaction.
+theme.store('dark');
 theme.adopt('dark', 'dark');
 check('picking Dark re-mounts the layer', theme.layers === 1);
 check('picking Dark clears the notice', !treeHas(row.tree, isWarning));
 
-// A refused preference write: the runtime adopts the old durable preference, the
-// layer must come off rather than paint dark tokens on a light base.
+// Now the settings document stops accepting writes (another program holds the
+// file). Flipping the switch asks for the dark base, the runtime falls back to the
+// stale durable value, and the plugin must assert the dark base in this client
+// instead of bouncing the user there.
+switchOf(row.tree).props.onClick();
+theme.store('system');
+switchOf(row.tree).props.onClick();
+const hostWritesBeforeRefusal = theme.hostWrites.length;
 theme.adopt('system', 'light');
-check('a refused write withdraws the layer', theme.layers === 0);
-check('a refused write shows the persist-failed notice', treeHas(row.tree, isWarning));
+await settle();
+check('a refused write ends up on the dark base', theme.colorScheme === 'dark' && theme.preference === THEME_ID);
+check('a refused write keeps the palette mounted', theme.layers === 1);
+check('a refused write does not retry the unwritable document', theme.hostWrites.length === hostWritesBeforeRefusal);
+check('a refused write explains that nothing can be saved', warningText(row.tree) === zhTable['row.notSaved']);
+
+// Once refused, the Appearance row cannot change anything any more: asserting the
+// dark base keeps Rider usable rather than bouncing to a value nothing can store.
+theme.adopt('light', 'light');
+await settle();
+check('after a refusal the dark base is re-asserted', theme.colorScheme === 'dark');
 
 // Switching off stops writing a preference the user has since chosen.
-const writesBefore = theme.writes.length;
-theme.adopt('light', 'light');
+const hostWritesBeforeOff = theme.hostWrites.length;
 switchOf(row.tree).props.onClick();
 check('switching off keeps the layer off', theme.layers === 0);
 check('switching off removes any warning', !treeHas(row.tree, isWarning));
-check('switching off leaves a user-chosen preference alone', theme.writes.length === writesBefore);
+check('switching off leaves a user-chosen preference alone', theme.hostWrites.length === hostWritesBeforeOff);
 
 // 3. Loading the page with the switch remembered as ON must not overrule a Light
 //    the user picked since — the palette simply stays off until Dark is chosen.
 const lightTheme = createTheme(THEME_ID);
+lightTheme.store('light');
 lightTheme.adopt('light', 'light');
 localStorage.set(ENABLED_KEY, '1');
 const second = createContext(lightTheme);
@@ -272,7 +326,7 @@ module.apply(second.ctx);
 const secondRow = React.mount(second.captured.row);
 check('reload with Light adopted writes no preference', lightTheme.writes.length === 0);
 check('reload with Light adopted mounts no layer', lightTheme.layers === 0);
-check('reload with Light adopted explains the state', treeHas(secondRow.tree, isWarning));
+check('reload with Light adopted explains the state', warningText(secondRow.tree) === zhTable['row.lightBase']);
 switchOf(secondRow.tree).props.onClick();
 switchOf(secondRow.tree).props.onClick();
 check('flipping the switch on asks for the dark base', lightTheme.writes.includes('dark'));

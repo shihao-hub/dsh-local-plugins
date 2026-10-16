@@ -12,6 +12,8 @@
       const THEME_ID = 'rider-dark';
       const THEME_LABEL = 'JetBrains Rider Dark';
       const LAYER_SOURCE = '@local/rider-theme';
+      /** Settings namespace owned by the theme plugin whose document stores the preference. */
+      const THEME_SETTINGS_NS = 'ui-theme';
       const ENABLED_KEY = 'rider-theme.enabled';
       const PREVIOUS_KEY = 'rider-theme.previous';
       const CSS_TAG_ID = '@local/rider-theme/row.css';
@@ -248,6 +250,8 @@
         'row.disable': '停用 JetBrains Rider Dark',
         'row.lightBase':
           '当前基座是浅色（你在「外观」里选了浅色）：Rider 深色配色已自动撤下，避免深浅混搭。切回「深色」即自动恢复。',
+        'row.notSaved':
+          '外观偏好写不进设置文件（正被编辑器等其它程序占用）：「外观」按钮目前无效，深色基座已由本插件在本页面维持，Rider 配色正常工作。关掉占用该文件的程序即可恢复保存。',
         'row.persistFailed':
           '外观偏好没能写入设置文件（常见原因是该文件正被编辑器等其它程序占用）：基座不是深色，配色已自动撤下，本主题暂不生效。请关闭占用该文件的程序后重新开关一次。'
       };
@@ -257,32 +261,44 @@
         'row.disable': 'Disable JetBrains Rider Dark',
         'row.lightBase':
           'The base scheme is light (you picked Light under Appearance): the Rider palette has been withdrawn so dark tokens never sit on a light base. It comes back automatically when you pick Dark again.',
+        'row.notSaved':
+          'The appearance preference cannot be saved (another program holds the settings file open): the Appearance buttons have no effect for now, and this page keeps the dark base itself so the Rider palette stays correct. Close that program to get saving back.',
         'row.persistFailed':
           'The appearance preference could not be saved (usually because another program holds the settings file open): the base scheme is not dark, so the palette has been withdrawn and the theme is inactive. Close that program and toggle the switch again.'
       };
 
+      /** Notice key to settings-row dictionary key. */
+      const NOTICE_KEYS = {
+        'light-base': 'row.lightBase',
+        'not-saved': 'row.notSaved',
+        'persist-failed': 'row.persistFailed'
+      };
+
       /**
-       * Why the palette is not currently painting, if it is not.
+       * Why the palette is not painting normally, if it is not.
        *
        * The palette is dark-only, so it may only ride a dark base scheme (see
-       * {@link reconcile} — the layer is mounted and withdrawn with the scheme).
-       * A light base has exactly two causes, and the row owes the user the right
-       * one:
+       * {@link reconcile}). Two situations need words, and `refused` tells them
+       * apart — it is set only when a write this plugin asked for demonstrably did
+       * not land:
        *
-       * - `light`: the user picked Light in the built-in Appearance row. Their
-       *   newer intent wins; we withdraw quietly and say how to come back.
-       * - `persist-failed`: we asked for a dark base and the durable preference
-       *   did not move, which on this platform means the Host settings document
-       *   is unwritable (another program holds the file open).
+       * - not refused: the Appearance row is working and simply is not on Dark, so
+       *   the palette steps aside until Dark comes back.
+       * - refused: the settings document is unwritable (another program holds the
+       *   file). The client maintains the dark base itself, so the palette stays
+       *   correct — but every other preference in this profile is still losing
+       *   writes, which the row says out loud.
        *
        * @param enabled - whether the switch is on.
+       * @param refused - whether a preference write has been observed to fail.
        * @param snapshot - theme snapshot, i.e. `theme.getTheme()`.
-       * @returns notice key to render, or null when the palette is painting.
+       * @returns notice key to render, or null when the palette is painting normally.
        */
-      const noticeFor = (enabled, snapshot) => {
+      const noticeFor = (enabled, refused, snapshot) => {
         if (!enabled) return null;
-        if (snapshot.active.colorScheme === 'dark') return null;
-        return snapshot.preference === 'light' ? 'light-base' : 'persist-failed';
+        const dark = snapshot.active.colorScheme === 'dark';
+        if (refused) return dark ? 'not-saved' : 'persist-failed';
+        return dark ? null : 'light-base';
       };
 
       const inject = ['theme', 'slots', 'locale'];
@@ -326,10 +342,79 @@
         let layer = null;
         let enabled = readStored(ENABLED_KEY) === '1';
         let notice = null;
+        /**
+         * Set once a preference write we asked for demonstrably did not stick:
+         * the Host settings document refused it (another program holds the file).
+         * From then on a dark base is asserted in this client instead, so the
+         * appearance row cannot bounce the user back to whatever stale durable
+         * preference the document still carries.
+         */
+        let refused = false;
+        let asserting = false;
+        /**
+         * A builtin preference the runtime moved to but the document does not hold
+         * (yet). The document is the only place a preference can actually be stored,
+         * so re-reading it shortly after is the one trustworthy way to tell a landed
+         * write from a refused one — and it works no matter who asked for the write
+         * (this plugin's switch or the user's own Appearance row).
+         */
+        let requested = null;
+        let verifyTimer = null;
+        /** Grace period for a write to show up in the document before judging it. */
+        const VERIFY_MS = 600;
         const subscribers = new Set();
         const publishState = () => {
           const state = { enabled, notice };
           for (const notify of subscribers) notify(state);
+        };
+
+        /**
+         * The durable preference the settings document currently holds, or undefined
+         * when that document cannot be read. Looked up instead of injected so a
+         * missing settings transport degrades to "cannot judge writes" rather than
+         * keeping the whole row from loading.
+         */
+        const documentPreference = () => {
+          const forms = ctx.get('configForms');
+          const host = typeof forms?.get === 'function' ? forms.get(THEME_SETTINGS_NS) : undefined;
+          return host?.getSnapshot?.().value?.preference;
+        };
+
+        const stopVerify = () => {
+          if (verifyTimer !== null) {
+            window.clearTimeout(verifyTimer);
+            verifyTimer = null;
+          }
+          requested = null;
+        };
+
+        /**
+         * Note a builtin preference the runtime is on that the document does not
+         * hold, and re-read the document once the write has had time to land.
+         */
+        const trackWrite = (snapshot) => {
+          const stored = documentPreference();
+          if (stored === undefined) return; // nothing to judge against
+          const preference = snapshot.preference;
+          // A registered theme id (our own local assertion) never reaches the
+          // document, so it neither confirms nor cancels a pending judgement.
+          if (BUILTIN_PREFERENCES.indexOf(preference) === -1) return;
+          if (stored === preference) {
+            if (requested === preference) stopVerify(); // confirmed by the document
+            return;
+          }
+          requested = preference;
+          if (verifyTimer !== null) window.clearTimeout(verifyTimer);
+          verifyTimer = window.setTimeout(() => {
+            verifyTimer = null;
+            const pending = requested;
+            requested = null;
+            if (pending === null || documentPreference() === pending) return; // landed
+            // Never showed up in the document: the write was refused, so nothing this
+            // row or the Appearance row does can be stored until the file is free.
+            refused = true;
+            reconcile();
+          }, VERIFY_MS);
         };
 
         const mountLayer = () => {
@@ -342,16 +427,49 @@
         };
 
         /**
-         * Bring the override layer and the row's notice in line with the current
-         * snapshot. Driven by `theme/change`, so a preference write that is refused
-         * (adoption puts the old durable preference back) withdraws the layer
-         * instead of leaving a dark palette painted on a light base.
+         * Put the base on dark again — locally, with the registered theme.
+         *
+         * `setTheme` only reaches the settings document for a *builtin* preference
+         * (`light`/`dark`/`system`); the registered `rider-dark` id is client-only,
+         * so this cannot fail and cannot start a retry loop against a document that
+         * just refused a write. The registered definition carries
+         * `colorScheme: 'dark'`, which is what makes the presenter stamp
+         * `body[data-ds-dark-theme]` and the dark base rules apply. The re-entrant
+         * `theme/change` is ignored through `asserting`.
+         */
+        const assertDark = () => {
+          if (asserting) return;
+          asserting = true;
+          try {
+            theme.setTheme(THEME_ID);
+          } finally {
+            asserting = false;
+          }
+        };
+
+        /**
+         * Bring the override layer, the client-side dark assertion and the row's
+         * notice in line with the current snapshot. Driven by `theme/change`, the
+         * only moment a preference write's fate is visible: adoption either accepts
+         * what we asked for or puts the old durable preference back.
          */
         const reconcile = () => {
-          const snapshot = theme.getTheme();
+          let snapshot = theme.getTheme();
+          trackWrite(snapshot);
+          // A builtin preference with no refusal behind it is the user's own newer
+          // choice in the Appearance row, so the palette steps aside for it. Once a
+          // write has been refused that row cannot change anything any more (the
+          // document cannot store it), and this client keeps the dark base instead
+          // of bouncing the user back to a value nothing can write.
+          const userChoice = !refused && (snapshot.preference === 'light' || snapshot.preference === 'system');
+          if (enabled && !userChoice && snapshot.active.colorScheme !== 'dark' && !asserting) {
+            refused = true;
+            assertDark();
+            snapshot = theme.getTheme();
+          }
           if (enabled && snapshot.active.colorScheme === 'dark') mountLayer();
           else dropLayer();
-          const next = noticeFor(enabled, snapshot);
+          const next = noticeFor(enabled, refused, snapshot);
           if (next === notice) return;
           notice = next;
           publishState();
@@ -377,7 +495,7 @@
           const adopted = theme.getTheme().preference;
           // The durable preference is what adoption falls back to once we stop
           // being selected; a refused write leaves it in place and `reconcile`
-          // keeps the layer off instead of half-applying the palette.
+          // asserts the dark base in this client instead of half-applying.
           if (force || adopted !== 'light') {
             theme.setTheme('dark');
             theme.setTheme(THEME_ID);
@@ -389,13 +507,15 @@
         const deactivate = () => {
           enabled = false;
           notice = null;
+          stopVerify();
           dropLayer();
           publishState();
           // Undo only a preference write this plugin displaced. A preference the
           // user picked in the built-in row afterwards is newer intent and must
-          // win, and after a refused write there is nothing to undo.
+          // win, and after a refused write there is nothing to undo (nothing ever
+          // landed in the document).
           const current = theme.getTheme().preference;
-          if (current === THEME_ID || current === 'dark') theme.setTheme(previousPreference());
+          if (!refused && (current === THEME_ID || current === 'dark')) theme.setTheme(previousPreference());
         };
 
         const setEnabled = (on) => {
@@ -428,6 +548,7 @@
 
         ctx.effect(
           () => () => {
+            stopVerify();
             dropLayer();
           },
           'rider-theme: override layer'
@@ -473,11 +594,7 @@
             ),
             state.notice === null
               ? null
-              : h(
-                  'div',
-                  { className: 'rdt_warn', role: 'status' },
-                  t(state.notice === 'light-base' ? 'row.lightBase' : 'row.persistFailed')
-                )
+              : h('div', { className: 'rdt_warn', role: 'status' }, t(NOTICE_KEYS[state.notice]))
           );
         }
 
@@ -506,7 +623,8 @@
           PREVIOUS_KEY,
           BUILTIN_PREFERENCES,
           pair,
-          noticeFor
+          noticeFor,
+          NOTICE_KEYS
         }
       };
     }
