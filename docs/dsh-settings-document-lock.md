@@ -2,8 +2,9 @@
 
 - **环境**：DeepSeek Harness `0.2.0-rc.2`，`dsh web --port 11111 --no-open`，Windows 11（本机实测）
 - **影响面**：`dsh web`（web profile）下**任何**设置写入都不落盘 —— 内置「外观（浅色/深色/跟随系统）」、字号、以及所有插件注册到设置面板的开关；桌面端使用同一 profile 文件时同样受影响
-- **表现**：UI 无任何报错。客户端先乐观显示新值，随后被宿主推回的旧值覆盖，刷新后仍是旧值 —— 用户看到的是「点了没反应 / 一会儿自己变回去」
-- **定位结论**：profile 的用户设置文档（`profiles/<profile>/cordis.patch.yml`）被外部程序（本例：Zed）持有，导致 DSH 的「临时文件 + 原子 rename」写入被系统拒绝（`EPERM`）
+- **表现**：UI 无任何报错。客户端先乐观显示新值，随后被宿主推回的旧值覆盖，刷新后仍是旧值 —— 用户看到的是「点了没反应 / 一会儿自己变回去」；点「深色」还会**自动跳回「跟随系统」**
+- **定位结论**：profile 的用户设置文档（`profiles/<profile>/cordis.patch.yml`）被外部程序持有（本例：**Zed 的 ACP agent 会话**，见第七节），DSH 的「临时文件 + 原子 rename」写入被系统拒绝（`EPERM`）
+- **重要鉴别**：**「重启 Zed」与「关标签页」都无效** —— 触发器不是 Zed 启动、也不是可见的编辑器标签，而是 **agent 会话把它当上下文**（见第七节）
 
 ---
 
@@ -96,6 +97,34 @@ after unset value{preference:"system"}  user{}                  revision 2
 
 ## 六、定位手法（可复用）
 
-- 占用者反查：Windows Restart Manager（`RmStartSession` / `RmRegisterResources` / `RmGetList`），比 `handle.exe` 免安装。
+- 占用者反查：Windows Restart Manager（`RmStartSession` / `RmRegisterResources` / `RmGetList`），比 `handle.exe` 免安装。**注意它给出的是持有句柄的进程**（本例是编辑器/IDE 主进程），不是"触发原因"（触发原因是它里面的 agent 会话）。
 - 影响确认：同目录「未占用文件 vs 目标文件」的 rename 对照实验，即可区分「目录/ACL 问题」与「文件被持有」。
-- 端到端确认：直接打 `/api/settings/describe` 与 `/api/settings/mutate`，看 `revision` 是否递增、`user` 是否出现字段。
+- 持续 vs 间歇：每 3 秒做一次与上层完全相同的替换操作，采样 45 秒 —— 15/15 失败=持续占用；时好时坏=对方在做扫描/索引，考虑有限重试。
+- 端到端确认：直接打 `/api/settings/describe` 与 `/api/settings/mutate`，看 `revision` 是否递增、`user` 是否出现字段；**HTTP 200 不代表成功**，要看响应信封里的 `ok/error`。
+- 日志指纹：编辑器/IDE 日志里搜被占路径，能直接看到是谁在开它（本例 `ERROR [crates/acp_thread/src/acp_thread.rs:1716] opening file "<配置文件路径>"`）。
+- 持久化核查：SQLite 只读核查（**先复制 `.db`+`-wal`+`-shm` 再打开**，别去锁活库）——查"孤儿编辑器行"（有 editor 记录、`items` 表里却没有对应条目 = 有句柄无标签）；agent 侧查 opencode 的 `session/message/part` 表即可定位到具体会话。
+- 处置顺序：**先查触发者，再决定动不动配置**（本例里"改 `restore_on_startup`"只是权宜，真正原因是 agent 上下文；用户也明确不接受改编辑器配置）。
+
+## 七、触发者定位（追加：不是 Zed 启动、也不是 opencode 进程）
+
+### 1) 三条证据链
+
+| 证据 | 内容 |
+|---|---|
+| 持有者 | Restart Manager 恒报 **Zed 主进程**（`app="Zed"`，PID 随重启变化），**不是**它拉起的 `opencode.exe`（opencode 以 `acp` 模式运行，父进程是 Zed 的子 PowerShell） |
+| 触发者 | `Zed.log` 反复出现 ACP 线程在开这些路径：<br>`ERROR [crates/acp_thread/src/acp_thread.rs:1716] opening file "C:\Users\<user>\.dsh\profiles\desktop"`（16:50:51 ×2、16:50:58、16:56:42、17:10:03、17:27:43） |
+| 残留状态 | Zed 的 `db.sqlite` 里 `editors` 表仍有该文件的 **2 行孤儿记录**（`workspace_id=66`、`contents=NULL`），而同一 workspace 的 `items` 表**为空** → 解释了"有句柄、界面上却没有标签页" |
+
+### 2) 对照实验（决定性）
+
+| 场景 | 结果 |
+|---|---|
+| Zed 重启、opencode 也在跑，但**没有恢复那个 agent 会话** | 两份 `cordis.patch.yml` 均 `free`，替换探测 **3/3 + 3/3 成功** |
+| 恢复/使用那个引用了 `.dsh` 路径的 agent 会话 | 45 秒采样 **0/15 成功**，holder 恒为 Zed |
+
+⇒ 因此：**关标签页无效**（没有标签页可关）、**重启 Zed 无效**（会话/线程状态会被恢复）、**杀 opencode 无效**（句柄在 Zed 主进程上）。唯一对症的动作是：**在 Zed 的 Agent 面板删掉那个会话**（本例会话 id `ses_ebcd5c7e3ffe…`，标题「dsh web 配置 deepseek harness desktop 插件」，目录 `D:/Users/dsh-local-plugins`），然后重启 Zed 复查仍为 `free`。
+
+### 3) 给使用者的两条经验
+
+1. **别把 `~/.dsh`、`~/.config` 这类"活配置目录"交给 AI agent 当上下文/工作目录** —— 一旦收进上下文，对方就会长期持有这些文件，让所有依赖原子替换的写入全部失败；
+2. 会话是**按项目持久化**的，用完就删；"关窗口/关标签页"不等于删会话。
