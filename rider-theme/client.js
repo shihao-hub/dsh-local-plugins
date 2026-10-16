@@ -280,6 +280,21 @@
       };
 
       /**
+       * The base the user is looking at.
+       *
+       * The presenter's stamp wins whenever it can be read, because the runtime snapshot
+       * can lag it (a preference write the Host refused leaves the runtime on a value
+       * neither the settings document nor the render ever took). Without a DOM — unit-test
+       * stubs, non-browser hosts — the snapshot is all there is.
+       *
+       * @param snapshot - theme snapshot, i.e. `theme.getTheme()`.
+       * @param renderedDark - the presenter's stamp, or null when it cannot be read.
+       * @returns whether the base scheme is dark.
+       */
+      const baseIsDark = (snapshot, renderedDark) =>
+        renderedDark === null ? snapshot.active.colorScheme === 'dark' : renderedDark;
+
+      /**
        * Why the palette is not painting normally, if it is not.
        *
        * The palette is dark-only, so it may only ride a dark base scheme (see
@@ -299,11 +314,12 @@
        * @param enabled - whether the switch is on.
        * @param refused - whether a preference write has been observed to fail.
        * @param snapshot - theme snapshot, i.e. `theme.getTheme()`.
+       * @param renderedDark - the presenter's stamp, or null when it cannot be read.
        * @returns notice key to render, or null when the palette is painting normally.
        */
-      const noticeFor = (enabled, refused, snapshot) => {
+      const noticeFor = (enabled, refused, snapshot, renderedDark = null) => {
         if (!enabled) return null;
-        const dark = snapshot.active.colorScheme === 'dark';
+        const dark = baseIsDark(snapshot, renderedDark);
         if (refused) return dark ? 'not-saved' : 'persist-failed';
         if (dark) return null;
         return snapshot.preference === 'system' ? 'system-base' : 'light-base';
@@ -368,8 +384,18 @@
          */
         let requested = null;
         let verifyTimer = null;
+        let recheckTimer = null;
         /** Grace period for a write to show up in the document before judging it. */
         const VERIFY_MS = 600;
+        /**
+         * How long after a snapshot change to look at the painted base again.
+         *
+         * `theme/change` fires when the runtime's snapshot moves; the presenter stamps
+         * `body[data-ds-dark-theme]` one render later. Without a second look, a base that
+         * had not been painted yet could pin the palette — or the notice — to the scheme
+         * the page just left.
+         */
+        const RECHECK_MS = 250;
         const subscribers = new Set();
         const publishState = () => {
           const state = { enabled, notice };
@@ -386,6 +412,26 @@
           const forms = ctx.get('configForms');
           const host = typeof forms?.get === 'function' ? forms.get(THEME_SETTINGS_NS) : undefined;
           return host?.getSnapshot?.().value?.preference;
+        };
+
+        /**
+         * The base the presenter actually stamped — the one the user is looking at.
+         *
+         * `theme.getTheme()` is a runtime view, and it can disagree with what is on
+         * screen: a preference write the Host refused leaves the runtime on a value
+         * neither the settings document nor the render ever took, so the snapshot can
+         * still read `system`/light while the page is dark. The presenter stamps
+         * `body[data-ds-dark-theme]` from the scheme it applied, which is the only
+         * account of the base that cannot lag behind the pixels — the same attribute
+         * the shiki sheet is scoped to.
+         *
+         * @returns true/false when the attribute can be read, null when there is no DOM
+         * (unit-test stubs, non-browser hosts) — callers then fall back to the snapshot.
+         */
+        const renderedDarkBase = () => {
+          if (typeof document === 'undefined' || document.body === null || document.body === undefined) return null;
+          if (typeof document.body.hasAttribute !== 'function') return null;
+          return document.body.hasAttribute('data-ds-dark-theme');
         };
 
         const stopVerify = () => {
@@ -480,14 +526,21 @@
           const freshChoice = stored !== undefined && stored !== preference;
           const userChoice =
             (preference === 'light' || preference === 'system') && (!refused || freshChoice);
-          if (enabled && !userChoice && snapshot.active.colorScheme !== 'dark' && !asserting) {
+          // The base, as painted rather than as the runtime remembers it: the row must
+          // never withdraw the palette — or announce a light base — while the page in
+          // front of the user is dark.
+          let renderedDark = renderedDarkBase();
+          if (enabled && !userChoice && !baseIsDark(snapshot, renderedDark) && !asserting) {
             refused = true;
             assertDark();
             snapshot = theme.getTheme();
+            // Our own assertion is not on screen yet. Judge this pass by the snapshot
+            // and let the deferred re-check read the real base once it is stamped.
+            renderedDark = null;
           }
-          if (enabled && snapshot.active.colorScheme === 'dark') mountLayer();
+          if (enabled && baseIsDark(snapshot, renderedDark)) mountLayer();
           else dropLayer();
-          const next = noticeFor(enabled, refused, snapshot);
+          const next = noticeFor(enabled, refused, snapshot, renderedDark);
           if (next === notice) return;
           notice = next;
           publishState();
@@ -558,7 +611,16 @@
          * moment the base stops being dark.
          */
         ctx.effect(() => {
-          const dispose = ctx.on('theme/change', reconcile);
+          const dispose = ctx.on('theme/change', () => {
+            reconcile();
+            // The presenter paints the base it applied one render after this event, so
+            // judge once more after it has had a chance to catch up.
+            if (recheckTimer !== null) window.clearTimeout(recheckTimer);
+            recheckTimer = window.setTimeout(() => {
+              recheckTimer = null;
+              reconcile();
+            }, RECHECK_MS);
+          });
           return () => {
             if (typeof dispose === 'function') dispose();
           };
@@ -567,6 +629,10 @@
         ctx.effect(
           () => () => {
             stopVerify();
+            if (recheckTimer !== null) {
+              window.clearTimeout(recheckTimer);
+              recheckTimer = null;
+            }
             dropLayer();
           },
           'rider-theme: override layer'

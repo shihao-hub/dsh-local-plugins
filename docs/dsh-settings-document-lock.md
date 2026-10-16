@@ -189,6 +189,12 @@ dsh-config-editor/lib/index.js:123   writeFileAtomic(path, document, { mode: 0o6
 而被拒写入失败后"回退成文档旧值"的那次推送不满足该条件，深色基座照样被断言住（老 bug 不复发）。
 文案拆出 `row.systemBase`，回归测试 37/37（`rider-theme/design/test-persist-notice.mjs`）。
 
+再往后还修掉一处**判定依据选错**的缺陷：插件原先完全依据运行时快照 `theme.getTheme()`，而实测出现过三分叉 ——
+**文档 `preference: dark`（18:33:26 写过）／页面渲染深色／运行时 `system`+浅色**（一次没落盘的乐观写入让运行时
+停在了两边都没接受的值上，且没有回退），于是行内在深色页面上声称"基座是浅色、你选了跟随系统"。
+现改为以 presenter 实际打上的 `body[data-ds-dark-theme]` 为准（无 DOM 时回退快照），并在每次 `theme/change`
+后 250ms 复判一次等 presenter 落笔；深色页面上不再出现"浅色基座"这类自相矛盾的话。回归 **45/45**。
+
 ---
 
 ## 九、追加：占用本身可以被摘掉 —— 换文件对象，而不是动对方句柄（Zed 全程未关）

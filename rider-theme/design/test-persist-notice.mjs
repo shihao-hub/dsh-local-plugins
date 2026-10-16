@@ -70,7 +70,29 @@ const loadPlugin = () => {
   const React = createReactStub();
   const source = readFileSync(CLIENT_PATH, 'utf8');
   const localStorage = new Map();
+  /**
+   * Minimal DOM. The row paints nothing itself, but the base it judges is the one the
+   * presenter stamped, so `document.body` stays null (⇒ judge by the snapshot) until a
+   * test attaches a body and flips `dom.dark`.
+   */
+  const dom = { dark: false, styles: new Map() };
+  const documentStub = {
+    querySelector: (selector) => {
+      const match = /data-plugin-css="([^"]+)"/.exec(selector);
+      return match !== null && dom.styles.has(match[1]) ? { dataset: {} } : null;
+    },
+    createElement: () => ({ dataset: {}, textContent: '', remove() {} }),
+    head: {
+      appendChild: (tag) => {
+        dom.styles.set(tag.dataset.pluginCss, tag);
+      }
+    },
+    body: null
+  };
+  /** The presenter's stamp, in the shape `renderedDarkBase()` reads. */
+  const attachedBody = () => ({ hasAttribute: (name) => name === 'data-ds-dark-theme' && dom.dark });
   const sandboxWindow = {
+    document: documentStub,
     localStorage: {
       getItem: (key) => (localStorage.has(key) ? localStorage.get(key) : null),
       setItem: (key, value) => localStorage.set(key, String(value)),
@@ -85,9 +107,11 @@ const loadPlugin = () => {
     throw new Error(`unexpected require("${id}") while testing client.js`);
   };
   let module;
-  new Function('window', source)(sandboxWindow);
+  // `document` is a bare global in client.js, so it has to be a parameter of the sandbox
+  // function rather than a property of the fake window.
+  new Function('window', 'document', source)(sandboxWindow, documentStub);
   if (module === undefined) throw new Error('client.js did not call window.__ModuleLoader__.load');
-  return { module, React, localStorage };
+  return { module, React, localStorage, documentStub, dom, attachedBody };
 };
 
 /** Theme service facsimile: registry, override layers, snapshot, writes and change events. */
@@ -234,7 +258,7 @@ const check = (label, pass) => {
 };
 const settle = (ms = 750) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const { module, React, localStorage } = loadPlugin();
+const { module, React, localStorage, documentStub, dom, attachedBody } = loadPlugin();
 const { noticeFor, NOTICE_KEYS, THEME_ID, ENABLED_KEY } = module.__test;
 
 // 1. Verdict table: only "switch on and not painting" states carry a notice, and
@@ -246,6 +270,11 @@ check('on + light base, nothing refused -> light-base', noticeFor(true, false, s
 check('on + light base from Follow system -> system-base', noticeFor(true, false, snapshot('light', 'system')) === 'system-base');
 check('on + dark base after a refusal -> not-saved', noticeFor(true, true, snapshot('dark', 'dark')) === 'not-saved');
 check('on + light base after a refusal -> persist-failed', noticeFor(true, true, snapshot('light', 'system')) === 'persist-failed');
+// The painted base outranks the runtime snapshot: a refused write leaves the runtime on
+// a value neither the document nor the render ever took.
+check('a dark page silences the light-base notice', noticeFor(true, false, snapshot('light', 'system'), true) === null);
+check('a dark page keeps the refusal wording', noticeFor(true, true, snapshot('light', 'system'), true) === 'not-saved');
+check('a light page still announces the base', noticeFor(true, false, snapshot('light', 'system'), false) === 'system-base');
 check('every notice key has row copy', Object.values(NOTICE_KEYS).every((key) => typeof key === 'string'));
 
 // 2. Wiring: the layer follows the base scheme, so Light/Dark/System can never
@@ -287,6 +316,24 @@ theme.store('dark');
 theme.adopt('dark', 'dark');
 check('picking Dark re-mounts the layer', theme.layers === 1);
 check('picking Dark clears the notice', !treeHas(row.tree, isWarning));
+
+// The base the presenter painted outranks a runtime snapshot that never landed: a refused
+// preference write leaves exactly this divergence — the document and the render stay where
+// they were while the runtime keeps the value it could not store. The row must follow the
+// pixels: never claim a light base, and never withdraw the palette, on a dark page.
+documentStub.body = attachedBody();
+dom.dark = true;
+theme.adopt('system', 'light'); // snapshot: light · page: dark
+check('a dark page keeps the palette despite a light snapshot', theme.layers === 1);
+check('a dark page says nothing about a light base', !treeHas(row.tree, isWarning));
+dom.dark = false;
+theme.adopt('system', 'light'); // snapshot: light · page: light
+check('a light page withdraws the palette', theme.layers === 0);
+check('a light page names the follow-system base', warningText(row.tree) === zhTable['row.systemBase']);
+dom.dark = true;
+theme.adopt('dark', 'dark'); // snapshot: dark · page: dark
+check('a dark page restores the palette', theme.layers === 1);
+documentStub.body = null;
 
 // Now the settings document stops accepting writes (another program holds the
 // file). Flipping the switch asks for the dark base, the runtime falls back to the
