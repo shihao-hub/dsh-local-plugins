@@ -314,6 +314,17 @@
         return snapshot.preference === 'system' ? 'system-base' : 'light-base';
       };
 
+      /**
+       * Tokens whose Rider values testify that *this* palette is the one painted. Used as a
+       * guard, so a scrub can never touch a palette that is not ours.
+       */
+      const PALETTE_WITNESSES = [
+        '--dsw-alias-bg-base',
+        '--dsw-alias-bg-layer-1',
+        '--dsw-alias-border-l4',
+        '--dsw-alias-label-primary'
+      ];
+
       const inject = ['theme', 'slots', 'locale'];
 
       function apply(ctx) {
@@ -353,6 +364,10 @@
          * selection. Override layers are keyed by source and survive adoption.
          */
         let layer = null;
+        /** Whether a layer registration is in flight (the host's publish re-enters). */
+        let mounting = false;
+        /** Whether the leftover-layer replacement is in flight (its publish re-enters). */
+        let cleaning = false;
         let enabled = readStored(ENABLED_KEY) === '1';
         let notice = null;
         /**
@@ -465,13 +480,82 @@
           return stored;
         };
 
+        /**
+         * Take this palette's own values off the body's inline variables.
+         *
+         * The presenter writes the active tokens inline and retracts them on its *next*
+         * apply, so a late or re-entrant apply can leave our values painted after the layer
+         * that produced them is gone: dark aliases under a light base, which is the state
+         * this row exists to prevent. Only values identical to ours are removed, and only
+         * once the witnesses agree that this palette really is the painted one, so a host
+         * palette is never touched. Nothing is published here, so this cannot re-enter.
+         */
+        const scrubPaintedTokens = () => {
+          if (typeof document === 'undefined' || document.body === null || document.body === undefined) return;
+          const inline = document.body.style;
+          if (inline === undefined || typeof inline.getPropertyValue !== 'function') return;
+          if (typeof inline.removeProperty !== 'function') return;
+          if (!PALETTE_WITNESSES.every((name) => inline.getPropertyValue(name).trim() === TOKENS[name].light)) return;
+          for (const [name, value] of Object.entries(TOKENS)) {
+            if (inline.getPropertyValue(name).trim() === value.light) inline.removeProperty(name);
+          }
+        };
+
         const mountLayer = () => {
-          if (layer === null) layer = theme.overrideTokens(LAYER_SOURCE, TOKENS);
+          if (layer !== null || mounting) return;
+          mounting = true;
+          try {
+            // The host republishes synchronously from inside this call (its publish re-enters
+            // this handler), so the handle must not be read back afterwards: a re-entrant
+            // mount would register another layer for the same source and leave this instance
+            // holding the *older* one — whose disposer the host documents as a no-op. The
+            // live layer would then survive every later withdrawal, painting dark aliases
+            // under a light base with the row truthfully reporting a light base.
+            layer = theme.overrideTokens(LAYER_SOURCE, TOKENS);
+          } finally {
+            mounting = false;
+          }
+        };
+        /**
+         * Whether the host's override registry still holds a layer of ours that this
+         * instance owns no disposer for.
+         *
+         * `overrideTokens` documents an older layer's disposer as a **no-op once the same
+         * source was re-overridden**, so a layer can outlive the handle we kept for it —
+         * and the host folds layers into the active tokens, so a survivor keeps painting
+         * after the base has moved on: dark aliases under a light scheme, with the row
+         * correctly reporting a light base, i.e. the half-applied state this row exists to
+         * prevent. The registry is asked directly (instead of judging painted colours,
+         * which another source could happen to paint) so the check can only ever answer
+         * for our own source; an unknown registry shape degrades to "nothing to clean up".
+         */
+        const leftoverLayer = () => {
+          const overrides = theme.overrides;
+          if (overrides === undefined || overrides === null) return false;
+          if (typeof overrides.get !== 'function' || typeof overrides.has !== 'function') return false;
+          return overrides.has(LAYER_SOURCE);
         };
         const dropLayer = () => {
-          if (layer === null) return;
-          layer();
-          layer = null;
+          if (layer !== null) {
+            // Clear the handle before disposing: the host republishes synchronously, and a
+            // re-entrant call must not try to dispose the same layer twice.
+            const current = layer;
+            layer = null;
+            current();
+            return;
+          }
+          // `overrideTokens` republishes synchronously, so the replacement below re-enters
+          // this handler while its own layer is registered; without the in-flight guard
+          // that re-entry would keep replacing it and blow the stack.
+          if (cleaning || !leftoverLayer()) return;
+          cleaning = true;
+          try {
+            // Re-overriding the source hands back a disposer that is guaranteed to remove
+            // what this source contributed, stale layer or not.
+            theme.overrideTokens(LAYER_SOURCE, TOKENS)();
+          } finally {
+            cleaning = false;
+          }
         };
 
         /**
@@ -532,7 +616,11 @@
             dark = snapshot.active.colorScheme === 'dark';
           }
           if (enabled && (dark || renderedDark === true)) mountLayer();
-          else dropLayer();
+          else {
+            dropLayer();
+            // Drops the registry layer *and* anything of ours the presenter left painted.
+            scrubPaintedTokens();
+          }
           const next = noticeFor(enabled, refused, snapshot, renderedDark);
           if (next === notice) return;
           notice = next;

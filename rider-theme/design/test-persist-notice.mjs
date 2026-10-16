@@ -75,7 +75,7 @@ const loadPlugin = () => {
    * presenter stamped, so `document.body` stays null (⇒ judge by the snapshot) until a
    * test attaches a body and flips `dom.dark`.
    */
-  const dom = { dark: false, styles: new Map() };
+  const dom = { dark: false, styles: new Map(), style: new Map() };
   const documentStub = {
     querySelector: (selector) => {
       const match = /data-plugin-css="([^"]+)"/.exec(selector);
@@ -89,8 +89,19 @@ const loadPlugin = () => {
     },
     body: null
   };
-  /** The presenter's stamp, in the shape `renderedDarkBase()` reads. */
-  const attachedBody = () => ({ hasAttribute: (name) => name === 'data-ds-dark-theme' && dom.dark });
+  /**
+   * The presenter's stamp plus the inline token variables it applies, in the shape
+   * `renderedDarkBase()` and `palettePaintedWithoutLayer()` read them.
+   */
+  const attachedBody = () => ({
+    hasAttribute: (name) => name === 'data-ds-dark-theme' && dom.dark,
+    style: {
+      getPropertyValue: (name) => dom.style.get(name) ?? '',
+      removeProperty: (name) => {
+        dom.style.delete(name);
+      }
+    }
+  });
   const sandboxWindow = {
     document: documentStub,
     localStorage: {
@@ -115,7 +126,7 @@ const loadPlugin = () => {
 };
 
 /** Theme service facsimile: registry, override layers, snapshot, writes and change events. */
-const createTheme = (THEME_ID) => {
+const createTheme = (THEME_ID, dom) => {
   const listeners = new Set();
   const registered = new Set(['light', 'dark']);
   const writes = [];
@@ -123,10 +134,17 @@ const createTheme = (THEME_ID) => {
   // The settings document as the Host would report it: the only place a preference
   // can actually be stored, so it decides whether a write landed or was refused.
   const document = { preference: 'system' };
-  const state = { snapshot: { preference: 'system', active: { id: 'light', colorScheme: 'light' } }, layers: 0 };
+  const state = { snapshot: { preference: 'system', active: { id: 'light', colorScheme: 'light' } }, layers: 0, overrideCalls: 0, overrides: new Map() };
   return {
     get layers() {
       return state.layers;
+    },
+    get overrideCalls() {
+      return state.overrideCalls;
+    },
+    /** The Host's override registry, keyed by source — what `leftoverLayer()` inspects. */
+    get overrides() {
+      return state.overrides;
     },
     get writes() {
       return writes;
@@ -155,10 +173,29 @@ const createTheme = (THEME_ID) => {
       registered.add(definition.id);
       return () => registered.delete(definition.id);
     },
-    overrideTokens() {
+    /**
+     * Stack a layer the way the Host does, and mirror both of its halves: the layer's token
+     * values land in the body's inline variables (the presenter), and an older layer's
+     * disposer is a no-op once the same source was re-overridden (the registry).
+     */
+    overrideTokens(source, tokens) {
+      const entry = { tokens };
+      state.overrides.set(source, entry);
       state.layers += 1;
+      state.overrideCalls += 1;
+      const applied = Object.entries(tokens ?? {});
+      for (const [name, value] of applied) dom.style.set(name, typeof value === 'string' ? value : value.light);
+      // The Host republishes synchronously on every override change, which is what makes the
+      // leftover-layer replacement re-enter the row's own theme/change handler.
+      for (const notify of listeners) notify(state.snapshot);
       return () => {
+        if (state.overrides.get(source) !== entry) return;
+        state.overrides.delete(source);
         state.layers -= 1;
+        // The presenter is what retracts the variables, and it does so on its *next* apply —
+        // which a late or re-entrant apply can push after the layer is gone. Leaving them
+        // painted here is what the row's own scrub has to answer for.
+        for (const notify of listeners) notify(state.snapshot);
       };
     },
     setTheme(id) {
@@ -259,7 +296,7 @@ const check = (label, pass) => {
 const settle = (ms = 750) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const { module, React, localStorage, documentStub, dom, attachedBody } = loadPlugin();
-const { noticeFor, NOTICE_KEYS, THEME_ID, ENABLED_KEY } = module.__test;
+const { noticeFor, NOTICE_KEYS, THEME_ID, ENABLED_KEY, TOKENS, LAYER_SOURCE } = module.__test;
 
 // 1. Verdict table: only "switch on and not painting" states carry a notice, and
 //    the notice depends on whether a write was actually observed to fail.
@@ -280,7 +317,7 @@ check('every notice key has row copy', Object.values(NOTICE_KEYS).every((key) =>
 // 2. Wiring: the layer follows the base scheme, so Light/Dark/System can never
 //    leave a dark palette under light structural rules — and a write the document
 //    refuses must not bounce the user off the dark base.
-const theme = createTheme(THEME_ID);
+const theme = createTheme(THEME_ID, dom);
 const { ctx, captured, dictionaries, missingKeys } = createContext(theme);
 module.apply(ctx);
 if (captured.row === null) throw new Error('the row was not registered into settings.general.item');
@@ -337,6 +374,22 @@ dom.dark = false;
 theme.adopt('system', 'light'); // snapshot: light · page: light
 check('a light page withdraws the palette', theme.layers === 0);
 check('a light page names the follow-system base', warningText(row.tree) === zhTable['row.systemBase']);
+
+// A layer can outlive the disposer we kept: the Host documents an older layer's disposer as
+// a no-op once the same source was re-overridden, so its registry can still hold our source
+// while this instance owns no handle for it. That survivor keeps painting dark aliases under
+// the light scheme the row just reported — the half-applied state this row exists to prevent.
+const LEFTOVER_WITNESSES = ['--dsw-alias-bg-base', '--dsw-alias-bg-layer-1', '--dsw-alias-border-l4', '--dsw-alias-label-primary'];
+theme.overrides.set(LAYER_SOURCE, { stale: true });
+for (const name of LEFTOVER_WITNESSES) dom.style.set(name, TOKENS[name].light);
+check('a leftover palette is painted without a live disposer', dom.style.get('--dsw-alias-bg-base') === TOKENS['--dsw-alias-bg-base'].light);
+const overrideCallsBefore = theme.overrideCalls;
+theme.adopt('light', 'light'); // any base move the row must answer
+check('a leftover layer of ours is taken off the registry', !theme.overrides.has(LAYER_SOURCE));
+check('a leftover layer costs exactly one replacement', theme.overrideCalls === overrideCallsBefore + 1);
+check('a leftover layer leaves no layer mounted', theme.layers === 0);
+check('a leftover palette stops painting', LEFTOVER_WITNESSES.every((name) => dom.style.get(name) === undefined));
+
 dom.dark = true;
 theme.adopt('dark', 'dark'); // snapshot: dark · page: dark
 check('a dark page restores the palette', theme.layers === 1);
@@ -383,7 +436,7 @@ check('switching off leaves a user-chosen preference alone', theme.hostWrites.le
 
 // 3. Loading the page with the switch remembered as ON must not overrule a Light
 //    the user picked since — the palette simply stays off until Dark is chosen.
-const lightTheme = createTheme(THEME_ID);
+const lightTheme = createTheme(THEME_ID, dom);
 lightTheme.store('light');
 lightTheme.adopt('light', 'light');
 localStorage.set(ENABLED_KEY, '1');

@@ -38,6 +38,17 @@
   `activate()` 里 `setTheme('dark')` 的同步回调误读成"写入被拒"；
 - `theme/change` 后 **250ms 再判一次**，等 presenter 落笔，把撤层/挂层纠回真实基座。
 
+**调色板的两条硬约束（都是实测踩出来的，见 `client.js:mountLayer` / `dropLayer` / `scrubPaintedTokens`）**
+
+1. **宿主的 `overrideTokens` 会同步 `publish()` 并重入本插件的 `theme/change`** —— 所以"调用返回之后再记住 handle"是错的：
+   重入会为同一个 source 再注册一层，最终存下的是**最旧那层**（其 disposer 被宿主文档化为 no-op），真正生效的那层
+   永远无人持有 —— 它会一直画着，即使基座已经切回浅色（页面深色、行内却如实说"基座是浅色"）。现在 `mountLayer` /
+   `dropLayer` 各有一个在途守卫（`mounting` / `cleaning`），handle 在同一次调用内定妥。
+2. **presenter 是"下一拍才按名字撤回"inline 变量** —— "层没了、值还在"是可能出现的（晚到/乱序的 apply）。因此判定
+   "不该画"时会做一次**受限擦除**（`scrubPaintedTokens`）：仅当 4 个见证 token 都等于我方值时才动手，且只删与我方值
+   完全相同的变量；它不发布事件，因此不会自激。残留层本身则由 `dropLayer` 直接查宿主注册表（`theme.overrides`）并
+   "重新注册一层再移除"清掉 —— 旧 disposer 是 no-op，新那层一定有效。
+
 > 为什么不用"时间窗猜"或"直接写死 `body[data-ds-dark-theme]`"：前者会把"用户主动选了跟随系统"误判成失败；后者是与宿主 presenter 抢 DOM。现在的做法是"文档为准 + 注册主题 id 做纯本地切换"，既准确又不与宿主打架。
 
 > 写入被拒的**根因**不在这层。已在 DSH 侧补了「备份 + 原地覆写」兜底（[`patches/`](../patches/README.md)）：
@@ -47,7 +58,7 @@
 ## 回归测试
 
 ```powershell
-node rider-theme/design/test-persist-notice.mjs   # 47/47
+node rider-theme/design/test-persist-notice.mjs   # 52/52
 node rider-theme/design/audit-tokens.mjs          # 116 covered / 0 missing / 0 unknown
 ```
 
