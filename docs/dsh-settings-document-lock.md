@@ -5,6 +5,7 @@
 - **表现**：UI 无任何报错。客户端先乐观显示新值，随后被宿主推回的旧值覆盖，刷新后仍是旧值 —— 用户看到的是「点了没反应 / 一会儿自己变回去」；点「深色」还会**自动跳回「跟随系统」**
 - **定位结论**：profile 的用户设置文档（`profiles/<profile>/cordis.patch.yml`）被外部程序持有（本例：**Zed 的 ACP agent 会话**，见第七节），DSH 的「临时文件 + 原子 rename」写入被系统拒绝（`EPERM`）
 - **重要鉴别**：**「重启 Zed」与「关标签页」都无效** —— 触发器不是 Zed 启动、也不是可见的编辑器标签，而是 **agent 会话把它当上下文**（见第七节）
+- **修复状态**：**已解决"必须关 Zed"** —— 实测被禁的不是「写」而是「替换」，已给 `@deepseek-ai/dsh-atomic-write` 加「备份 + 原地覆写」兜底（见第八节）；根因（用户设置文档与外部编辑器对象是同一份）仍需上游处理
 
 ---
 
@@ -128,3 +129,62 @@ after unset value{preference:"system"}  user{}                  revision 2
 
 1. **别把 `~/.dsh`、`~/.config` 这类"活配置目录"交给 AI agent 当上下文/工作目录** —— 一旦收进上下文，对方就会长期持有这些文件，让所有依赖原子替换的写入全部失败；
 2. 会话是**按项目持久化**的，用完就删；"关窗口/关标签页"不等于删会话。
+
+---
+
+## 八、追加：被禁的不是「写」，是「替换」—— 于是可以不改编辑器就修好
+
+第七节给的处置（删掉那个 agent 会话 / 关掉编辑器）在**使用者体验上是不可接受的**：
+要求"每次改设置前先关 Zed"本身就是一个 bug。于是回头测了「到底哪个权限被挡」。
+
+### 1) 2026-10-16 18:13 复测（两份文档均被 Zed 主进程持有）
+
+| 操作 | `profiles/web/cordis.patch.yml` | `profiles/desktop/cordis.patch.yml` |
+|---|---|---|
+| 独占打开（`FileShare.None`） | 拒绝 | 拒绝 |
+| 以 read / write / delete 权限打开 | **都允许** | **都允许** |
+| `MoveFileEx(REPLACE_EXISTING)`（= DSH 保存的最后一步） | **Win32 5 Access denied** | **Win32 5 Access denied** |
+| 同目录 rename 到新名字（对照） | OK | OK |
+| **原地覆写同一文件（同字节重写）** | **OK** | **OK** |
+
+同刻 45 秒采样（每 3 秒一次替换探测）：**0/15**，holder 恒为 `app="Zed"`（PID 随重启变化）；
+`Zed.log` 18:11:28 仍在 `acp_thread … opening file "…\.dsh\profiles\desktop"`。
+
+⇒ 结论：**句柄挡的是"改名替换"这个元数据操作，不是文件内容本身。** 所以只要写入路径肯退化，
+就**不需要**删会话、不需要关编辑器、不需要改编辑器配置。
+
+### 2) DSH 侧的写入咽喉与它现有的重试
+
+```text
+dsh-config-editor/lib/index.js:123   writeFileAtomic(path, document, { mode: 0o600 })
+  └─ @deepseek-ai/dsh-atomic-write   lib/index.js
+       writeFileAtomic → <file>.<hex>.tmp (wx) → renameAtomicTemp()
+       renameAtomicTemp: Windows EACCES/EBUSY/EPERM 重试 8 次（20→200ms，约 1.3s）
+       重试耗尽 → rm(temp) → throw      ← 设置就在这里丢
+```
+
+重试是对付**瞬时**干扰（索引器、杀软）的正确设计；对一个**整场会话**都不松手的句柄，
+重试预算 1.3 秒就花完了，下一次写入再从零开始 —— 永远等不到。
+
+### 3) 已落地的兜底（本机已验证，等同第四节第 2 条建议）
+
+`D:\Users\dsh-local-plugins\patches\apply-dsh-atomic-write-fallback.mjs` 给该模块追加一段
+`dsh-local-patch` 标记的代码，把导出换成包装函数：上游逻辑照旧；**只在 Windows 的
+`EACCES/EBUSY/EPERM` 且重试已耗尽时**，退化为「写 `<文件>.bak` → 打开目标 `r+` → 写入 →
+`truncate` → `fsync` → 按上游约定 `chmod`」，成功即返回；任一步失败仍抛出原错误（保持原行为）。
+
+- 验证：**17/17** —— 无人占用时仍走 rename 且**不产生 `.bak`**；被 Zed 持有的两份文档写入成功、
+  字节不变、`.bak` 与原文一致、退化为 `process.emitWarning`
+  （`DSH_ATOMIC_WRITE_INPLACE_FALLBACK`）；测试用临时文件与 `.bak` 均已清理。
+- 生效时机：**需重启 `dsh`**（正在跑的进程已经把旧模块读进内存）。
+- 代价：**这一次替换不再原子**（读方可能在几 KB 的写入窗口内看到半份文件），有 `.bak` 兜底；
+  只想 Windows 生效；可设 `DSH_ATOMIC_WRITE_NO_INPLACE_FALLBACK=1` 关掉；**升级 DSH 后需重跑重打脚本**。
+- 上游 issue 草稿：`patches/issue-atomic-write-inplace-fallback.md`。
+
+### 4) 顺带修掉的插件副作用
+
+上一版插件把"被拒"当成"`外观` 行此后一律无效"，于是**你新点「跟随系统」会被强行切回深色**，
+且行内文案把「跟随系统（系统是浅色）」说成"你在「外观」里选了浅色"。现已改为：
+只要某个 builtin 偏好**文档里本来就没有**（= 你刚点的那一下），即使处于被拒状态也尊重它；
+而被拒写入失败后"回退成文档旧值"的那次推送不满足该条件，深色基座照样被断言住（老 bug 不复发）。
+文案拆出 `row.systemBase`，回归测试 37/37（`rider-theme/design/test-persist-notice.mjs`）。
