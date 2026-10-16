@@ -196,7 +196,8 @@
         '.rdt_switch.rdt_on{background:var(--dsw-alias-brand-primary)}',
         '.rdt_switch:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:2px}',
         '.rdt_thumb{width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-switch-thumb);transition:transform .15s ease}',
-        '.rdt_switch.rdt_on .rdt_thumb{transform:translateX(16px)}'
+        '.rdt_switch.rdt_on .rdt_thumb{transform:translateX(16px)}',
+        '.rdt_warn{color:var(--dsw-alias-state-warn-label);font-size:12px;line-height:18px}'
       ].join('');
 
       /**
@@ -244,13 +245,39 @@
       const zh = {
         'row.description': '来自 Zed 主题包的 JetBrains Rider 深色配色',
         'row.enable': '启用 JetBrains Rider Dark',
-        'row.disable': '停用 JetBrains Rider Dark'
+        'row.disable': '停用 JetBrains Rider Dark',
+        'row.persistFailed':
+          '外观偏好没能写入设置文件（常见原因是该文件正被编辑器等其它程序占用）：基座仍是浅色，本主题只应用了配色，代码高亮等仍是浅色。请关闭占用该文件的程序后重新开关一次。'
       };
       const en = {
         'row.description': 'JetBrains Rider dark palette, ported from the Zed theme package',
         'row.enable': 'Enable JetBrains Rider Dark',
-        'row.disable': 'Disable JetBrains Rider Dark'
+        'row.disable': 'Disable JetBrains Rider Dark',
+        'row.persistFailed':
+          'The appearance preference could not be saved (usually because another program holds the settings file open): the base scheme is still light, so only the palette is applied and code highlighting stays light. Close that program and toggle the switch again.'
       };
+
+      /**
+       * Verdict on whether the activated palette is actually rendering as intended.
+       *
+       * The palette itself rides a plugin-owned override layer, so it applies no
+       * matter what; the *base scheme* is what the durable settings preference
+       * decides, and a rejected preference write (the Host settings document is
+       * unwritable while another program holds the file) makes ThemeRuntime.adopt()
+       * put the old durable preference back. A dark-only palette left on the light
+       * base keeps the light `--shiki-*` sheet and the light structural rules, so
+       * the row has to say so rather than look half-applied.
+       *
+       * `preference` is deliberately not part of the verdict: adoption falling back
+       * to a durable `dark` renders exactly right, and only the scheme decides
+       * whether the palette is sitting on the base it was built for.
+       *
+       * @param enabled - whether the switch is on.
+       * @param snapshot - theme snapshot, i.e. `theme.getTheme()`.
+       * @returns notice key to render, or null when the palette renders as intended.
+       */
+      const persistNotice = (enabled, snapshot) =>
+        enabled && snapshot.active.colorScheme !== 'dark' ? 'persist-failed' : null;
 
       const inject = ['theme', 'slots', 'locale'];
 
@@ -292,9 +319,18 @@
          */
         let layer = null;
         let enabled = readStored(ENABLED_KEY) === '1';
+        let notice = null;
         const subscribers = new Set();
         const publishState = () => {
-          for (const notify of subscribers) notify(enabled);
+          const state = { enabled, notice };
+          for (const notify of subscribers) notify(state);
+        };
+        /** Re-read the rendering verdict; publish only when it actually changed. */
+        const refreshNotice = () => {
+          const next = persistNotice(enabled, theme.getTheme());
+          if (next === notice) return;
+          notice = next;
+          publishState();
         };
 
         const previousPreference = () => {
@@ -309,6 +345,7 @@
           theme.setTheme('dark');
           theme.setTheme(THEME_ID);
           enabled = true;
+          notice = null;
           publishState();
         };
 
@@ -319,6 +356,7 @@
           }
           theme.setTheme(previousPreference());
           enabled = false;
+          notice = null;
           publishState();
         };
 
@@ -337,6 +375,20 @@
 
         if (enabled) activate();
 
+        /**
+         * A rejected preference write only becomes visible when the runtime adopts
+         * the durable preference again, so the verdict is read on `theme/change`
+         * rather than assumed right after `activate()` — that also keeps a write
+         * that does land (scheme flips to dark moments later) from flashing a
+         * warning that would immediately have to be taken back.
+         */
+        ctx.effect(() => {
+          const dispose = ctx.on('theme/change', refreshNotice);
+          return () => {
+            if (typeof dispose === 'function') dispose();
+          };
+        }, 'rider-theme: appearance notice');
+
         ctx.effect(
           () => () => {
             if (layer === null) return;
@@ -347,12 +399,13 @@
         );
 
         function RiderRow() {
-          const [on, setOn] = React.useState(enabled);
+          const [state, setState] = React.useState({ enabled, notice });
+          const on = state.enabled;
 
           React.useEffect(() => {
-            const notify = (next) => setOn(next);
+            const notify = (next) => setState(next);
             subscribers.add(notify);
-            setOn(enabled);
+            notify({ enabled, notice });
             return () => {
               subscribers.delete(notify);
             };
@@ -382,7 +435,10 @@
                 },
                 h('span', { className: 'rdt_thumb' })
               )
-            )
+            ),
+            state.notice === null
+              ? null
+              : h('div', { className: 'rdt_warn', role: 'status' }, t('row.persistFailed'))
           );
         }
 
@@ -410,7 +466,8 @@
           ENABLED_KEY,
           PREVIOUS_KEY,
           BUILTIN_PREFERENCES,
-          pair
+          pair,
+          persistNotice
         }
       };
     }
