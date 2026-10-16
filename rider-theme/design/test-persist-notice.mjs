@@ -243,6 +243,7 @@ const snapshot = (colorScheme, preference) => ({ preference, active: { colorSche
 check('off + light base -> no notice', noticeFor(false, false, snapshot('light', 'light')) === null);
 check('on + dark base -> no notice', noticeFor(true, false, snapshot('dark', 'dark')) === null);
 check('on + light base, nothing refused -> light-base', noticeFor(true, false, snapshot('light', 'light')) === 'light-base');
+check('on + light base from Follow system -> system-base', noticeFor(true, false, snapshot('light', 'system')) === 'system-base');
 check('on + dark base after a refusal -> not-saved', noticeFor(true, true, snapshot('dark', 'dark')) === 'not-saved');
 check('on + light base after a refusal -> persist-failed', noticeFor(true, true, snapshot('light', 'system')) === 'persist-failed');
 check('every notice key has row copy', Object.values(NOTICE_KEYS).every((key) => typeof key === 'string'));
@@ -302,11 +303,22 @@ check('a refused write keeps the palette mounted', theme.layers === 1);
 check('a refused write does not retry the unwritable document', theme.hostWrites.length === hostWritesBeforeRefusal);
 check('a refused write explains that nothing can be saved', warningText(row.tree) === zhTable['row.notSaved']);
 
-// Once refused, the Appearance row cannot change anything any more: asserting the
-// dark base keeps Rider usable rather than bouncing to a value nothing can store.
+// A newer Appearance click survives the refusal: the document cannot store it, but the
+// row must not override what the user just picked — it says the save failed and steps
+// aside. The document still holding `system` here is exactly what makes the click read
+// as fresh rather than as a durable value coming back.
 theme.adopt('light', 'light');
 await settle();
-check('after a refusal the dark base is re-asserted', theme.colorScheme === 'dark');
+check('a fresh Appearance click is honoured after a refusal', theme.colorScheme === 'light');
+check('a fresh Appearance click steps the palette aside', theme.layers === 0);
+check('a fresh Appearance click names the failed save', warningText(row.tree) === zhTable['row.persistFailed']);
+
+// What the document brings back is not a choice: the dark base the user asked for
+// stays, instead of the palette riding a value nothing can write.
+theme.adopt('system', 'light');
+await settle();
+check('the durable value coming back re-asserts the dark base', theme.colorScheme === 'dark');
+check('the durable value coming back keeps the palette mounted', theme.layers === 1);
 
 // Switching off stops writing a preference the user has since chosen.
 const hostWritesBeforeOff = theme.hostWrites.length;

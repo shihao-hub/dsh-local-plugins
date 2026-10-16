@@ -250,6 +250,8 @@
         'row.disable': '停用 JetBrains Rider Dark',
         'row.lightBase':
           '当前基座是浅色（你在「外观」里选了浅色）：Rider 深色配色已自动撤下，避免深浅混搭。切回「深色」即自动恢复。',
+        'row.systemBase':
+          '当前基座是浅色（你在「外观」里选了「跟随系统」，而系统此刻是浅色）：Rider 深色配色已自动撤下，避免深浅混搭。切回「深色」即自动恢复。',
         'row.notSaved':
           '外观偏好写不进设置文件（正被编辑器等其它程序占用）：「外观」按钮目前无效，深色基座已由本插件在本页面维持，Rider 配色正常工作。关掉占用该文件的程序即可恢复保存。',
         'row.persistFailed':
@@ -261,6 +263,8 @@
         'row.disable': 'Disable JetBrains Rider Dark',
         'row.lightBase':
           'The base scheme is light (you picked Light under Appearance): the Rider palette has been withdrawn so dark tokens never sit on a light base. It comes back automatically when you pick Dark again.',
+        'row.systemBase':
+          'The base scheme is light (you picked Follow system, and the system is light right now): the Rider palette has been withdrawn so dark tokens never sit on a light base. It comes back automatically when you pick Dark again.',
         'row.notSaved':
           'The appearance preference cannot be saved (another program holds the settings file open): the Appearance buttons have no effect for now, and this page keeps the dark base itself so the Rider palette stays correct. Close that program to get saving back.',
         'row.persistFailed':
@@ -270,6 +274,7 @@
       /** Notice key to settings-row dictionary key. */
       const NOTICE_KEYS = {
         'light-base': 'row.lightBase',
+        'system-base': 'row.systemBase',
         'not-saved': 'row.notSaved',
         'persist-failed': 'row.persistFailed'
       };
@@ -283,7 +288,9 @@
        * not land:
        *
        * - not refused: the Appearance row is working and simply is not on Dark, so
-       *   the palette steps aside until Dark comes back.
+       *   the palette steps aside until Dark comes back. The wording separates the
+       *   two ways to get there, because "you picked Light" is wrong for someone who
+       *   picked Follow system on a light system.
        * - refused: the settings document is unwritable (another program holds the
        *   file). The client maintains the dark base itself, so the palette stays
        *   correct — but every other preference in this profile is still losing
@@ -298,7 +305,8 @@
         if (!enabled) return null;
         const dark = snapshot.active.colorScheme === 'dark';
         if (refused) return dark ? 'not-saved' : 'persist-failed';
-        return dark ? null : 'light-base';
+        if (dark) return null;
+        return snapshot.preference === 'system' ? 'system-base' : 'light-base';
       };
 
       const inject = ['theme', 'slots', 'locale'];
@@ -391,17 +399,21 @@
         /**
          * Note a builtin preference the runtime is on that the document does not
          * hold, and re-read the document once the write has had time to land.
+         *
+         * @returns The preference the document holds, or undefined when it cannot be
+         * read — the caller needs the same reading to tell a fresh Appearance click
+         * from the durable value coming back.
          */
         const trackWrite = (snapshot) => {
           const stored = documentPreference();
-          if (stored === undefined) return; // nothing to judge against
+          if (stored === undefined) return stored; // nothing to judge against
           const preference = snapshot.preference;
           // A registered theme id (our own local assertion) never reaches the
           // document, so it neither confirms nor cancels a pending judgement.
-          if (BUILTIN_PREFERENCES.indexOf(preference) === -1) return;
+          if (BUILTIN_PREFERENCES.indexOf(preference) === -1) return stored;
           if (stored === preference) {
             if (requested === preference) stopVerify(); // confirmed by the document
-            return;
+            return stored;
           }
           requested = preference;
           if (verifyTimer !== null) window.clearTimeout(verifyTimer);
@@ -415,6 +427,7 @@
             refused = true;
             reconcile();
           }, VERIFY_MS);
+          return stored;
         };
 
         const mountLayer = () => {
@@ -455,13 +468,18 @@
          */
         const reconcile = () => {
           let snapshot = theme.getTheme();
-          trackWrite(snapshot);
-          // A builtin preference with no refusal behind it is the user's own newer
-          // choice in the Appearance row, so the palette steps aside for it. Once a
-          // write has been refused that row cannot change anything any more (the
-          // document cannot store it), and this client keeps the dark base instead
-          // of bouncing the user back to a value nothing can write.
-          const userChoice = !refused && (snapshot.preference === 'light' || snapshot.preference === 'system');
+          const stored = trackWrite(snapshot);
+          // A light/system preference the document does not already hold can only be
+          // the user's own newer click in the Appearance row: a refused write's
+          // fallback restores the durable value, so that one never looks new. Such a
+          // click is honoured even after a refusal — overriding the choice the user
+          // just made is the bug this row must not reintroduce. What the refusal does
+          // keep is the dark base: a preference that only came back from the document
+          // is not a choice, so it never drags the palette off.
+          const preference = snapshot.preference;
+          const freshChoice = stored !== undefined && stored !== preference;
+          const userChoice =
+            (preference === 'light' || preference === 'system') && (!refused || freshChoice);
           if (enabled && !userChoice && snapshot.active.colorScheme !== 'dark' && !asserting) {
             refused = true;
             assertDark();
