@@ -280,21 +280,6 @@
       };
 
       /**
-       * The base the user is looking at.
-       *
-       * The presenter's stamp wins whenever it can be read, because the runtime snapshot
-       * can lag it (a preference write the Host refused leaves the runtime on a value
-       * neither the settings document nor the render ever took). Without a DOM — unit-test
-       * stubs, non-browser hosts — the snapshot is all there is.
-       *
-       * @param snapshot - theme snapshot, i.e. `theme.getTheme()`.
-       * @param renderedDark - the presenter's stamp, or null when it cannot be read.
-       * @returns whether the base scheme is dark.
-       */
-      const baseIsDark = (snapshot, renderedDark) =>
-        renderedDark === null ? snapshot.active.colorScheme === 'dark' : renderedDark;
-
-      /**
        * Why the palette is not painting normally, if it is not.
        *
        * The palette is dark-only, so it may only ride a dark base scheme (see
@@ -311,6 +296,10 @@
        *   correct — but every other preference in this profile is still losing
        *   writes, which the row says out loud.
        *
+       * Dark counts when *either* the snapshot or the painted base says so: the
+       * presenter stamps `body[data-ds-dark-theme]` one render after the runtime moves,
+       * so a lone stale signal must not let the row announce a light base on a dark page.
+       *
        * @param enabled - whether the switch is on.
        * @param refused - whether a preference write has been observed to fail.
        * @param snapshot - theme snapshot, i.e. `theme.getTheme()`.
@@ -319,7 +308,7 @@
        */
       const noticeFor = (enabled, refused, snapshot, renderedDark = null) => {
         if (!enabled) return null;
-        const dark = baseIsDark(snapshot, renderedDark);
+        const dark = snapshot.active.colorScheme === 'dark' || renderedDark === true;
         if (refused) return dark ? 'not-saved' : 'persist-failed';
         if (dark) return null;
         return snapshot.preference === 'system' ? 'system-base' : 'light-base';
@@ -526,19 +515,23 @@
           const freshChoice = stored !== undefined && stored !== preference;
           const userChoice =
             (preference === 'light' || preference === 'system') && (!refused || freshChoice);
-          // The base, as painted rather than as the runtime remembers it: the row must
-          // never withdraw the palette — or announce a light base — while the page in
-          // front of the user is dark.
-          let renderedDark = renderedDarkBase();
-          if (enabled && !userChoice && !baseIsDark(snapshot, renderedDark) && !asserting) {
+          // The base is dark when either account says so. The presenter stamps
+          // `body[data-ds-dark-theme]` one render after the runtime moves, so a lone
+          // signal is stale — and a stale light stamp must never withdraw the palette
+          // (that is the half-applied state this row exists to prevent) nor let the row
+          // announce a light base on a dark page.
+          const renderedDark = renderedDarkBase();
+          let dark = snapshot.active.colorScheme === 'dark';
+          // Self-maintenance is decided by the runtime alone: our own `setTheme` fires
+          // this handler synchronously, before the presenter has painted anything, so
+          // judging it by the pixels would read every assertion as a refused write.
+          if (enabled && !userChoice && !dark && !asserting) {
             refused = true;
             assertDark();
             snapshot = theme.getTheme();
-            // Our own assertion is not on screen yet. Judge this pass by the snapshot
-            // and let the deferred re-check read the real base once it is stamped.
-            renderedDark = null;
+            dark = snapshot.active.colorScheme === 'dark';
           }
-          if (enabled && baseIsDark(snapshot, renderedDark)) mountLayer();
+          if (enabled && (dark || renderedDark === true)) mountLayer();
           else dropLayer();
           const next = noticeFor(enabled, refused, snapshot, renderedDark);
           if (next === notice) return;

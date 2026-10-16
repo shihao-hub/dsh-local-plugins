@@ -28,10 +28,15 @@
 于是点「跟随系统」/「浅色」不再被判为"无效操作"而强行切回深色（那正是把用户新选择吞掉的旧行为），
 而"深色被拒后又被弹回文档旧值"这条老 bug 依旧被断言住。
 
-**判定以「渲染出来的基座」为准，而不是运行时快照**（`client.js:baseIsDark`）：运行时视图会滞后 —— 一次没落盘的偏好写入
-会让它停在"文档和渲染都没接受"的值上（实测出现过三分叉：文档 `preference: dark`、页面深色、运行时 `system`/浅色，
-行内于是声称"基座是浅色"）。现在以 presenter 实际打上的 `body[data-ds-dark-theme]` 为准（无 DOM 时回退快照），
-并在每次 `theme/change` 后 250ms 再判一次，等 presenter 落笔。
+**深色基座按「运行时 + 渲染」保守取并**（`client.js:reconcile` / `noticeFor`）：presenter 把 `body[data-ds-dark-theme]`
+打在 `theme/change` **之后一拍**，而运行时视图也可能滞后（一次没落盘的写入会让它停在文档与渲染都没接受的值上 ——
+实测出现过：文档 `dark`、页面深色、运行时 `system`/浅色）。因此：
+
+- **配色**：两者**任一**说深色就挂载（陈旧的浅色渲染绝不撤层 → 不会出现"深色 token 叠在浅色结构上"）；
+- **文案**：两者**都同意**不是深色时才说"基座是浅色"，深色页面上不会出现这类自相矛盾的话；
+- **自维持深色**（`assertDark`）**只由运行时决定** —— 那是"我们自己的意图"，不是"像素"；用像素判会把
+  `activate()` 里 `setTheme('dark')` 的同步回调误读成"写入被拒"；
+- `theme/change` 后 **250ms 再判一次**，等 presenter 落笔，把撤层/挂层纠回真实基座。
 
 > 为什么不用"时间窗猜"或"直接写死 `body[data-ds-dark-theme]`"：前者会把"用户主动选了跟随系统"误判成失败；后者是与宿主 presenter 抢 DOM。现在的做法是"文档为准 + 注册主题 id 做纯本地切换"，既准确又不与宿主打架。
 
@@ -42,7 +47,7 @@
 ## 回归测试
 
 ```powershell
-node rider-theme/design/test-persist-notice.mjs   # 45/45
+node rider-theme/design/test-persist-notice.mjs   # 47/47
 node rider-theme/design/audit-tokens.mjs          # 116 covered / 0 missing / 0 unknown
 ```
 

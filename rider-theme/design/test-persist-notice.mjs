@@ -288,10 +288,17 @@ const row = React.mount(captured.row);
 const zhTable = (dictionaries.get('rider-theme') ?? {}).zh ?? {};
 check('row starts without a warning', !treeHas(row.tree, isWarning));
 
+// The presenter stamps the base one render behind the runtime, so attach a body still
+// reporting the *previous* scheme: flipping the switch must be judged by the runtime and
+// must not read as a refused write just because the pixels have not caught up yet.
+documentStub.body = attachedBody();
+dom.dark = false;
+
 switchOf(row.tree).props.onClick();
 check('switch on mounts the layer on the dark base', theme.layers === 1);
 check('applied preference targets rider-dark', theme.preference === THEME_ID);
 check('no warning while the base is dark', !treeHas(row.tree, isWarning));
+check('a stale light render is not read as a refused write', !treeHas(row.tree, isWarning));
 
 // The Host accepted the write: the document holds `dark`, which confirms it.
 theme.store('dark');
@@ -317,15 +324,15 @@ theme.adopt('dark', 'dark');
 check('picking Dark re-mounts the layer', theme.layers === 1);
 check('picking Dark clears the notice', !treeHas(row.tree, isWarning));
 
-// The base the presenter painted outranks a runtime snapshot that never landed: a refused
-// preference write leaves exactly this divergence — the document and the render stay where
-// they were while the runtime keeps the value it could not store. The row must follow the
-// pixels: never claim a light base, and never withdraw the palette, on a dark page.
-documentStub.body = attachedBody();
+// The base the presenter painted can also be *ahead* of a snapshot that never landed: a
+// refused preference write leaves the runtime on a value neither the document nor the
+// render took. The row must follow the pixels there too — never claim a light base, and
+// never withdraw the palette, on a dark page.
 dom.dark = true;
 theme.adopt('system', 'light'); // snapshot: light · page: dark
 check('a dark page keeps the palette despite a light snapshot', theme.layers === 1);
 check('a dark page says nothing about a light base', !treeHas(row.tree, isWarning));
+check('a dark page is not read as a refused write', !treeHas(row.tree, isWarning));
 dom.dark = false;
 theme.adopt('system', 'light'); // snapshot: light · page: light
 check('a light page withdraws the palette', theme.layers === 0);

@@ -192,8 +192,13 @@ dsh-config-editor/lib/index.js:123   writeFileAtomic(path, document, { mode: 0o6
 再往后还修掉一处**判定依据选错**的缺陷：插件原先完全依据运行时快照 `theme.getTheme()`，而实测出现过三分叉 ——
 **文档 `preference: dark`（18:33:26 写过）／页面渲染深色／运行时 `system`+浅色**（一次没落盘的乐观写入让运行时
 停在了两边都没接受的值上，且没有回退），于是行内在深色页面上声称"基座是浅色、你选了跟随系统"。
-现改为以 presenter 实际打上的 `body[data-ds-dark-theme]` 为准（无 DOM 时回退快照），并在每次 `theme/change`
-后 250ms 复判一次等 presenter 落笔；深色页面上不再出现"浅色基座"这类自相矛盾的话。回归 **45/45**。
+第一版修法是"以 presenter 实际打上的 `body[data-ds-dark-theme]` 为准"，**但这一版本身有 bug**：presenter 落笔
+晚于 `theme/change` 一拍，而 `activate()` 里的 `setTheme('dark')` 会**同步**触发 reconcile —— 那一刻页面还是上一套
+配色，于是被读成"写入被拒"，`refused` 被置 true，行内出现「基座不是深色…本主题暂不生效」（而文档其实写得好好的）。
+
+最终口径是**保守取并**：深色 = 运行时快照为深色 **或** 渲染为深色 —— 配色在任一为深色时挂载（陈旧的浅色渲染
+绝不撤层），"基座是浅色"这类话只在两者都同意时说；而**自维持深色只由运行时决定**（那是我方意图，不是像素），
+并在 `theme/change` 后 250ms 复判一次等 presenter 落笔。回归 **47/47**（含"陈旧的浅色渲染不会被当成写入被拒"）。
 
 ---
 
