@@ -33,15 +33,41 @@ DSH 模型 ──► mcp__agy__research (MCP 工具)
 | `mcp__agy__research` | 只读委托调研/审计。参数：`prompt`（必填）、`cwd`（工作目录，默认桥接器目录）、`model`、`effort`、`add_dir`、`timeout_seconds` |
 | `mcp__agy__list_models` | 列出 agy 可用模型（本地调用，零额度） |
 
+## 后台作业入口（`bin/agy-run.mjs`，推荐用于宽面调研）
+
+同步 MCP 调用受客户端工具超时约束，宽面调研（≥3 分钟）应当改走**后台作业**：一条命令跑完，
+进度边跑边落盘，报告最后落盘，超时连整棵进程树一起回收。
+
+```powershell
+node D:\Users\dsh-local-plugins\agy-bridge\bin\agy-run.mjs `
+  --prompt-file "$env:TEMP\agy-audit-prompt.md" `
+  --cwd D:\Users\language_projects `
+  --effort high --timeout 1200
+```
+
+| 关键行为 | 说明 |
+| :--- | :--- |
+| 固定只读形态 | `--sandbox --mode plan --output-format stream-json` |
+| 进度可观测 | 事件流逐行落 `--progress`（`init` / `step` / `result`），含 `stepIndex`、`stepType`、tokens |
+| 报告落盘 | `result.response` 写入 `--out`（默认 `%TEMP%\agy-report-<时间戳>.md`） |
+| 超时回收 | 到 `--timeout` 用 `taskkill /T /F` **连孙进程一起**回收（Windows 上 `kill()` 只杀直接子进程，不够） |
+| 守卫段注入 | 自动追加只读探针规则与**非交互声明**（禁止"先出计划等确认"） |
+| plan-and-wait 兜底 | 命中「待确认/Proceed」时可用 `--continue-once` 自动续跑一次（硬上限 1 次） |
+| 退出码 | `0` 成功 / `2` 超时 / `3` agy 失败 / `4` 参数环境错误 / `5` 命中 plan-and-wait |
+
+退出码与 `planWait` 行可直接作为调用方（主 Agent 或脚本）的判定依据。
+
 ## 文件结构
 
 ```
 agy-bridge/
 ├── package.json                # @local/agy-bridge 包元数据（dsh.bundle.patch 指向自身 patch）
-├── bin/launch.mjs              # Node 启动器：绝对路径找到 uv，转发 stdio 给 Python 桥接器
+├── bin/launch.mjs              # Node 启动器：绝对路径找到 python，转发 stdio 给 Python 桥接器
+├── bin/agy-run.mjs             # 后台作业入口：进度/报告落盘 + 超时连坐回收 + plan-and-wait 兜底
 ├── server/agy_bridge_server.py # 桥接器本体（PEP 723，零依赖，纯标准库）
 ├── cordis.patch.yml            # 相对路径版 patch（包分发形态）
 ├── cordis.patch.resolved.yml   # 绝对路径版 patch（装入 profile 用，见下）
+├── plans/                      # 长任务断连与孤儿进程治理方案 + 实施任务清单
 └── README.md
 ```
 

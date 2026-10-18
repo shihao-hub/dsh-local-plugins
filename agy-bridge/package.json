@@ -10,6 +10,7 @@
   },
   "files": [
     "bin/launch.mjs",
+    "bin/agy-run.mjs",
     "server/agy_bridge_server.py",
     "cordis.patch.yml",
     "cordis.patch.resolved.yml",
