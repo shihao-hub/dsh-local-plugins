@@ -11,5 +11,6 @@
         command: 'D:\nvm4w\nodejs\node.exe'
         args:
           - 'D:\Users\dsh-local-plugins\agy-bridge\bin\launch.mjs'
-        # mcp-client 默认单次工具调用上限仅 60s，而调研任务通常需数分钟
-        toolCallTimeoutMs: 240000
+        # mcp-client 默认单次工具调用上限仅 60s；须高于桥接器 MAX_TIMEOUT_S(3600s)，
+        # 使桥接器成为权威超时（否则客户端会以无上下文的 "Request timed out" 提前砍掉）
+        toolCallTimeoutMs: 3700000

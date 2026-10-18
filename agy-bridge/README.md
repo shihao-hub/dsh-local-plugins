@@ -60,12 +60,17 @@ profile 的 user patch 里加一块（与 `mcp-aoci` / `mcp-argo` 同款写法�
         command: 'D:\nvm4w\nodejs\node.exe'
         args:
           - 'D:\Users\dsh-local-plugins\agy-bridge\bin\launch.mjs'
-        toolCallTimeoutMs: 240000
+        toolCallTimeoutMs: 3700000
 ```
 
 说明：
 - 目标文件：`~/.dsh/profiles/web/cordis.patch.yml`；
 - `toolCallTimeoutMs` 必配：mcp-client 默认单次工具调用上限仅 60s，调研不够用；
+- **该上限必须 ≥ 桥接器 `MAX_TIMEOUT_S`（3600s）+ 余量**，否则客户端会先于桥接器砍断，
+  模型只能看到无上下文的 `Request timed out`（MCP SDK 的 `REQUEST_TIMEOUT`），
+  桥接器自己的 `durationS` 与 agy stderr 摘要根本来不及返回。推荐 `3700000`；
+- 实测标定（2026-10-17）：agy 每回合约 5.5s（含模型往返），一次覆盖 6 个板块的宽面调研
+  耗 62 回合 ≈ 10.7 分钟；**宽任务应拆成 2–3 个并行窄委托**，而非抬高单次上限硬扛；
 - 本机 `uv` 位于 `C:\Users\29580\.local\bin\uv.exe`，`launch.mjs` 会按候选表自动定位，
   换机时如果能路径变了，改 `bin/launch.mjs` 顶部候选表即可。
 
@@ -96,4 +101,5 @@ python D:\Users\dsh-local-plugins\agy-bridge\server\agy_bridge_server.py
 | 面板里没有 agy 工具 | 看 profile patch 是否写对；重启 DSH 后仍无 → 检查 node/uv 路径 |
 | `agy_not_found` | 设置环境变量 `AGY_BIN` 指向 agy.exe，或写 `server/agy-bridge.config.json` 的 `agyPath` |
 | `agy_failed` | 文本里带 agy stderr 摘要；常见为网络/配额/登录态问题 |
-| 工具调用 60s 超时 | 给 `config.toolCallTimeoutMs` 调大 |
+| 工具调用报 `Request timed out` | 客户端 `config.toolCallTimeoutMs` 到点（默认 60s）先于桥接器砍断；调大到 `3700000` 并重启 DSH |
+| 工具调用超时（桥接器侧） | 文本里带 `durationS` 与 agy stderr 摘要；说明是 agy 真跑超了，可提高 `timeout_seconds` 或拆窄 prompt |
