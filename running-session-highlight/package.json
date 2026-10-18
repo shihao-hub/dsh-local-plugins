@@ -1,0 +1,29 @@
+{
+  "name": "@local/running-session-highlight",
+  "version": "1.0.0",
+  "private": true,
+  "icon": "./icon.svg",
+  "type": "module",
+  "description": "Makes a running session in the sidebar unmistakable: the host's 14px tertiary-grey spinner becomes a thicker 16px accent ring and the whole row breathes an accent tint. Pure CSS injection, no DOM mutation.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

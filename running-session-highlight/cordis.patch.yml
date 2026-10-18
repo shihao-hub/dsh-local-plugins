@@ -1,0 +1,3 @@
+- insert:
+    - id: running-session-highlight
+      name: '@local/running-session-highlight'
