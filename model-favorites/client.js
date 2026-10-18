@@ -14,7 +14,11 @@
  *    localStorage-backed star list keyed by `provider/model`;
  *  - a hover star toggle on every model row (clicking never selects);
  *  - a right-side caption showing each row's provider, so same-named
- *    models from different providers and favorites rows stay distinguishable.
+ *    models from different providers and favorites rows stay distinguishable;
+ *  - a tiny ascii provider superscript (≤3 lowercase letters) riding above the
+ *    gutter between the model name and the reasoning effort, so the chosen
+ *    organization stays readable while the menu is shut; the full name lives
+ *    in title/aria-label.
  *
  * Search, keyboard navigation, pending spinners, effort selection, error
  * and toast handling keep the shipped behavior because the component and
@@ -201,8 +205,9 @@
         '.mfs_trigger:disabled{color:var(--dsw-alias-label-dimmed);cursor:default}',
         '.mfs_triggerLabel{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}',
         '.mfs_triggerEffort{text-overflow:ellipsis;white-space:nowrap;min-width:0;color:var(--dsw-alias-label-caption);flex-shrink:1000;overflow:hidden}',
+        '.mfs_triggerProvider{flex:none;align-self:flex-start;margin:3px 0 0;color:var(--dsw-alias-label-caption);font-size:8.5px;line-height:10px;letter-spacing:.05em;white-space:nowrap;pointer-events:none}',
         '.mfs_triggerIcon{display:var(--dsh-composer-model-icon-display,none);flex:none}',
-        '.mfs_triggerLabel,.mfs_triggerEffort{display:var(--dsh-composer-model-text-display,block)}',
+        '.mfs_triggerLabel,.mfs_triggerProvider,.mfs_triggerEffort{display:var(--dsh-composer-model-text-display,block)}',
         '.mfs_chevron{color:var(--dsw-alias-label-caption);flex:none;transition:transform .12s}',
         '.mfs_chevronOpen{transform:rotate(180deg)}',
         '.mfs_menu{z-index:1100;--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(240px,100vw - 32px);max-width:min(420px,100vw - 32px);max-height:min(360px,100vh - 96px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);border:0;flex-direction:column;padding:4px;display:flex;position:fixed;overflow:hidden}',
@@ -250,6 +255,7 @@
         trigger: 'mfs_trigger',
         triggerLabel: 'mfs_triggerLabel',
         triggerEffort: 'mfs_triggerEffort',
+        triggerProvider: 'mfs_triggerProvider',
         triggerIcon: 'mfs_triggerIcon',
         chevron: 'mfs_chevron',
         chevronOpen: 'mfs_chevronOpen',
@@ -312,6 +318,26 @@
       /** Display name of one provider group (account alias localized). */
       function groupLabel(group, t) {
         return group.id === 'deepseek-account' ? t('provider.account') : group.name;
+      }
+
+      /**
+       * Provider 角标文本：只用小写 ASCII（中文在 9px 上下会因字面高度与字体回退显得更大，
+       * 也比拉丁字母更难塞进 28px 的触发器）。已知 provider 给固定 ≤3 字母，未知 provider
+       * 用 id 里去掉分隔符后的前 4 个字符兜底（id 永远是 ASCII，不会把中文漏出来）。
+       * 完整归属名不进这里，只进 title / aria-label / 菜单行 caption。
+       */
+      const PROVIDER_SHORT = {
+        'deepseek-account': 'acc',
+        'deepseek-official': 'off',
+        'opencode-go': 'ocg',
+        'zai-coding-cn': 'zai'
+      };
+
+      function providerShortTag(providerId) {
+        const known = PROVIDER_SHORT[providerId];
+        if (known !== undefined) return known;
+        const ascii = typeof providerId === 'string' ? providerId.replace(/[^a-z0-9]+/gi, '').toLowerCase() : '';
+        return ascii.length <= 4 ? ascii : ascii.slice(0, 4);
       }
 
       /**
@@ -692,14 +718,27 @@
         const waiting = state.current === null && state.status === 'loading';
         const modelLabel =
           waiting ? t('trigger.loading') : currentChoice?.model.name ?? (state.current === null ? t('trigger.fallback') : `${state.current.provider}/${state.current.model}`);
-        const triggerLabel = effortLabel === undefined ? modelLabel : `${modelLabel} · ${effortLabel}`;
+        // favorites: 菜单外（触发器）也标注所属 provider 分组，否则关掉菜单就不知道
+        // 当前选中的是哪个组织下的同名模型。可见部分是一枚**上标**：≤3 个小写 ASCII
+        // 字母、8.5px、无边框，水平留在「模型名 → 等级」之间的槽位里，靠
+        // `align-self:flex-start` + `margin-top` 抬到字身上方（不是居中摆件）；
+        // 完整归属名只进 title / aria-label / 菜单行 caption；
+        // 只有存在多个 provider 分组时才出现（单组织下纯噪音）。
+        const currentProviderGroup = state.current === null ? undefined : orderedGroups.find((group) => group.id === state.current.provider);
+        const providerLabel =
+          currentProviderGroup === undefined ? state.current?.provider : groupLabel(currentProviderGroup, t);
+        const showProvider = waiting !== true && state.current !== null && orderedGroups.length > 1 && providerLabel !== undefined && providerLabel !== '';
+        const providerTag = showProvider ? providerShortTag(state.current.provider) : '';
+        const providerSuffix = showProvider ? ` · ${providerLabel}` : '';
+        const triggerLabel = `${modelLabel}${providerSuffix}${effortLabel === undefined ? '' : ` · ${effortLabel}`}`;
+        const modelWithProvider = `${modelLabel}${providerSuffix}`;
         const triggerAria = waiting
           ? t('trigger.loading')
           : state.current === null
             ? t('trigger.selectAria')
             : effortLabel === undefined
-              ? t('trigger.aria', { model: modelLabel })
-              : t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel });
+              ? t('trigger.aria', { model: modelWithProvider })
+              : t('trigger.ariaEffort', { model: modelWithProvider, effort: effortLabel });
         itemRefs.current = [];
         let itemIndex = 0;
         let modelIndex = 0;
@@ -746,6 +785,12 @@
                   className: css.triggerLabel,
                   children: modelLabel
                 }),
+                showProvider &&
+                  providerTag !== '' &&
+                  jsxRuntime.jsx('span', {
+                    className: css.triggerProvider,
+                    children: providerTag
+                  }),
                 effortLabel !== undefined &&
                   jsxRuntime.jsx('span', {
                     className: css.triggerEffort,
@@ -791,7 +836,7 @@
                                   }),
                                   jsxRuntime.jsx('span', {
                                     className: css.cellValue,
-                                    children: modelLabel
+                                    children: modelWithProvider
                                   }),
                                   jsxRuntime.jsx(primitives.IconChevronRightOutlineRegular, { className: css.cellChevron })
                                 ]
