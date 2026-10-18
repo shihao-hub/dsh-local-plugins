@@ -38,7 +38,12 @@
   - 验证：`Get-Item ~/.dsh/AGENTS.md` 真身文件字节数 < 24 000（agy 规则文件硬上限）；该节 grep 得到新条目
   - Demo：下次模型接到"全仓架构审计"时，路由表直接把它推向后台作业通道
 
-- [ ] **T2 沉淀统一封装脚本（后台作业模式入口）**
+- [x] **T2 沉淀统一封装脚本（后台作业模式入口）**（2026-10-18 完成并实测）
+  - 产物：`agy-bridge/bin/agy-run.mjs`（含守卫段注入、stream-json 进度落盘、报告落盘、
+    超时连整棵进程树回收、plan-and-wait 检测与 `--continue-once` 有界自动续跑）
+  - 实测记录（6 次运行）：快乐路径 exit 0 / 14.3 s / `planWait=no`；确定性诱发 + `--continue-once`
+    → 命中并自动续跑，`continuations=1`、`turns=2`、exit 0、报告为真实交付物；
+    守卫段文件缺失时 fail-fast（exit 4），不静默回退
   - 文件：新增 `agy-bridge/bin/agy-run.mjs`
   - 实现：`node bin/agy-run.mjs --prompt-file <f> --cwd <dir> [--out <report>] [--progress <log>] [--print-timeout 900s]`；
     固定拼装 `--sandbox --mode plan --output-format stream-json`；逐事件追加进度行到 `--progress`；
@@ -111,17 +116,22 @@
     再跑一次真实窄调用，断言 agy 的事件流里不再出现 `rglob`（可 grep 事件文本）
   - Demo：`%TEMP%\check_ptrs.py` 这类脚本不再被生成
 
-- [ ] **T8b 非交互 plan-mode 兜底（plan-and-wait 自动续跑）**
-  - 文件：`agy-bridge/server/agy_bridge_server.py`、`agy-bridge/test/`（标定用 prompt 夹具）
-  - 实现：识别「plan-and-wait 终态」——`result.status == SUCCESS` 但响应命中 `待确认|请审阅|Proceed|确认无误后`
-    特征，且 `num_turns` 低于同类基线；命中则用 `agy --conversation <conversation_id>` 追加
-    「继续执行，直接输出最终报告，不要再征求批准」**自动续跑一次（硬上限 1 次，防死循环）**，
-    续跑计入同一 job 的进度与时长；连续两次命中即把 job 置为 `needs_attention` 并在结果里说明
-  - 验证：① 用「读取 X 前 3 行并原样贴出」这类**已知会触发 plan-and-wait 的 prompt** 跑一次，
-    断言 job 终态为 `completed` 且结果含实际内容、`continuations == 1`；
-    ② A/B 标定 3 轮：带/不带守卫段⑥，统计「停在待确认」次数，带守卫应显著下降；
-    ③ **负向写盘测试（仅在评估 `--mode auto` 时才做）**：要求 agy「把结果写进 `.\_probe_write.md`」，
-    断言该文件不存在，否则禁止切换模式
+- [ ] **T8b 非交互 plan-mode 兜底（plan-and-wait 检测 + 有界自动续跑）**
+  - 文件：`agy-bridge/server/agy_bridge_server.py`、`agy-bridge/test/`（夹具）
+  - 前置结论（2026-10-18 实测，勿重复走弯路）：plan-and-wait **不可稳定复现**，属概率性失败模式；
+    `--disable-slash-commands` 实测**无可观测影响**，不作为修复手段（详见方案 §3.6）。因此本任务
+    的目标不是"让它不出现"，而是"它出现时自动消化"
+  - 参考实现：`agy-bridge/bin/agy-run.mjs` 的 `--continue-once`（CLI 侧已落地并验证：
+    `continuations=1`、`turns=2`、exit 0、产出真实交付物）；桥接器侧把同一机制搬进 job 状态机
+  - 实现：识别「plan-and-wait 终态」——`result.status == SUCCESS` 但响应命中
+    `待确认|请审阅|Proceed|确认无误后|等待您的批准` → 用 `agy --conversation <conversation_id>` 追加
+    「继续：直接输出最终交付物，不要再征求批准」**自动续跑一次（硬上限 1 次，防死循环）**，
+    续跑计入同一 job 的进度与时长；续跑仍命中则保留首轮产物并把 job 置为 `needs_attention`
+  - 验证：① 用「先输出你打算怎么完成任务的计划，等我确认后再执行：<任务>」这一**确定性诱发 prompt**
+    （实测 100% 命中）跑一次，断言 job 终态 `completed`、结果含实际交付物、`continuations == 1`；
+    ② 统计法：同一中性 prompt 跑 5 次，记录自然命中率与守卫段⑥的效果（**不得**用单次"未复现"当作
+    守卫有效的证据）；③ **负向写盘测试（仅在评估 `--mode auto` 时才做）**：要求 agy「把结果写进
+    `.\_probe_write.md`」，断言该文件不存在，否则禁止切换模式
   - Demo：模型再也不会拿到「请点击 Proceed」这种没人能执行的答复
 
 - [ ] **T9 工具面定型（短任务快捷路径 + 作业句柄四件套）**
