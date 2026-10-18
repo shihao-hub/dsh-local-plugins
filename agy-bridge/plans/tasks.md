@@ -21,7 +21,7 @@
 
 ## P0 · 止血（分钟级，先让重型任务不再命中同步通道）
 
-- [ ] **T0 收尾当前未提交的超时配置改动**
+- [x] **T0 收尾当前未提交的超时配置改动**（2026-10-18 完成，Q8 取「先单独提交」）
   - 文件：`agy-bridge/cordis.patch.yml`、`agy-bridge/cordis.patch.resolved.yml`、`agy-bridge/README.md`、
     `agy-bridge/plans/01-长任务断连与孤儿进程治理方案.md`、`agy-bridge/plans/tasks.md`
   - 实现：把三处 `toolCallTimeoutMs: 240000 → 3700000` 与 README 说明**单独提交**；本计划两文件
@@ -104,10 +104,25 @@
   - 实现：每次调用在 prompt 末尾追加固定守卫段：① 文件枚举一律用 `git ls-files`（无 git 时用受限
     单层列举）；② **禁止** `Path.rglob` / `os.walk` 全盘裸扫；③ 目录遍历限深、限条数、限时；
     ④ 8 分钟预算内"先出结构，再补细节"；⑤ 禁止把探针脚本托管为长时间后台任务；
+    ⑥ **非交互声明（关键）**：本调用为 `-p` print 模式、无人可点击 Proceed，必须在同一回合内直接
+    产出最终交付物，禁止生成"待确认 / 请审阅"的计划文档；
     并给出可审计标记（如守卫段带固定前缀，便于日志核对）
   - 验证：对桥接器发一次调用，抓取构造出的 argv（新增 `--debug-argv` 或日志打印），断言守卫段存在且**只追加一次**；
     再跑一次真实窄调用，断言 agy 的事件流里不再出现 `rglob`（可 grep 事件文本）
   - Demo：`%TEMP%\check_ptrs.py` 这类脚本不再被生成
+
+- [ ] **T8b 非交互 plan-mode 兜底（plan-and-wait 自动续跑）**
+  - 文件：`agy-bridge/server/agy_bridge_server.py`、`agy-bridge/test/`（标定用 prompt 夹具）
+  - 实现：识别「plan-and-wait 终态」——`result.status == SUCCESS` 但响应命中 `待确认|请审阅|Proceed|确认无误后`
+    特征，且 `num_turns` 低于同类基线；命中则用 `agy --conversation <conversation_id>` 追加
+    「继续执行，直接输出最终报告，不要再征求批准」**自动续跑一次（硬上限 1 次，防死循环）**，
+    续跑计入同一 job 的进度与时长；连续两次命中即把 job 置为 `needs_attention` 并在结果里说明
+  - 验证：① 用「读取 X 前 3 行并原样贴出」这类**已知会触发 plan-and-wait 的 prompt** 跑一次，
+    断言 job 终态为 `completed` 且结果含实际内容、`continuations == 1`；
+    ② A/B 标定 3 轮：带/不带守卫段⑥，统计「停在待确认」次数，带守卫应显著下降；
+    ③ **负向写盘测试（仅在评估 `--mode auto` 时才做）**：要求 agy「把结果写进 `.\_probe_write.md`」，
+    断言该文件不存在，否则禁止切换模式
+  - Demo：模型再也不会拿到「请点击 Proceed」这种没人能执行的答复
 
 - [ ] **T9 工具面定型（短任务快捷路径 + 作业句柄四件套）**
   - 文件：`agy-bridge/server/agy_bridge_server.py`、`agy-bridge/README.md`
