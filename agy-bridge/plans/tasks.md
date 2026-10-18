@@ -75,16 +75,25 @@
     断言 3 s 内（见 D1）进程树计数为 0，且 job 终态为 `cancelled`
   - Demo：DSH 客户端 240 s 超时时，服务端**当秒收手**，不再"超时后还在跑"
 
-- [ ] **T5 Windows Job Object 连坐回收（+ CPU/进程数上限）**
-  - 文件：`agy-bridge/server/agy_bridge_server.py`（新增 `ctypes` 段：`jobobject.py` 或同文件内私有区）
-  - 实现：`CreateJobObjectW` → `SetInformationJobObject(JobObjectExtendedLimitInformation)` 设
-    `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`、`ActiveProcessLimit`、`PerJobUserTimeLimit`（Q3 取值）→
-    `Popen` 后立即 `AssignProcessToJobObject`（用 `Popen._handle` 或 `OpenProcess`）；
-    **Job 只装 agy 子树，绝不装桥接器自身**；非 Windows 回退进程组 + 树杀
-  - 验证（受控、可重复，不依赖 agy 行为）：`AGY_BIN` 指向 stub（stub 自己再拉起一个 CPU 燃烧
-    孙进程）→ 断言 (a) 桥接器进程被 `taskkill /F` 后 3 s 内 stub 与孙进程计数为 0（D1），
-    (b) 孙进程触发 `PerJobUserTimeLimit` 后被杀（D4）
-  - Demo：任务管理器里再也看不到"agy 死了但 python 还在 100%"的场面
+- [x] **T5 Windows Job Object 连坐回收（原语已落地并内核级验证；接线在 T3 改写时进行）**
+  - 产物：`agy-bridge/server/win_job.py` + `agy-bridge/test/test_win_job.py`（3/3 通过）
+  - **设计按实测修正（原计划的"spawn 后立即 assign"被证伪）**：
+    1. **assign 不追溯**：实测"先派生孙进程、再 assign 子进程 → 关闭 Job 后子死孙活"，
+       正是要消灭的孤儿。故改为**收容自身**：`create_containment_job()` 在建桥时把
+       **桥接器进程自己**放进 kill-on-close Job，此后所有 agy 后代在创建时自动继承成员
+       资格，无竞态。实测持有者被 `taskkill /F`（**不带 /T**）杀死后，孙进程 0.0s 内被内核终止；
+    2. **结构体长度须探测**：本机（Win11 10.0.26200）`SetInformationJobObject(class=9)`
+       只接受 **144 字节**（文档布局 112），传 112 稳定返回 `ERROR_BAD_LENGTH(24)`；
+       模块改为候选表探测 + 缓存，不硬编码；
+    3. 字段偏移用文档布局的原始偏移（LimitFlags=16、ActiveProcessLimit=40、记账
+       ActiveProcesses=40，class=1 长度 48），全部经功能验证；
+    4. **单次任务的 CPU 上限不在本模块范围**：job 级 CPU 限额会连带计入桥接器自身，
+       而每任务单独建 Job 又需"挂起态创建 + 恢复主线程"才能避免竞态 → 纯 CPU 灾难改由
+       T7 的「无进度事件看门狗 + 墙钟超时」兜住（与方案 §5 的风险条一致）
+  - 验证记录：收容用例 3/3 通过（记账 ActiveProcesses=3 证明三层树全部入 Job）；防误用用例
+    固定"不追溯"行为；隔离用例证明未入 Job 的进程不被误杀
+  - 待办（T3 接线时）：`main()` 最开头 `create_containment_job()` 并长期持有；按需取消单棵树
+    仍用 `taskkill /PID <pid> /T /F`（不依赖成员资格、无竞态）
 
 - [ ] **T6 改用 `--output-format stream-json` 做真实进度**
   - 文件：`agy-bridge/server/agy_bridge_server.py`
