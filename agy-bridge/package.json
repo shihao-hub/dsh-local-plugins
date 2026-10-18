@@ -12,6 +12,7 @@
     "bin/launch.mjs",
     "bin/agy-run.mjs",
     "server/agy_bridge_server.py",
+    "server/win_job.py",
     "cordis.patch.yml",
     "cordis.patch.resolved.yml",
     "README.md"
