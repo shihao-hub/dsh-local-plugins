@@ -272,6 +272,18 @@ function sameOrigin(req) {
 	return origin === 'http://' + host || origin === 'https://' + host;
 }
 
+/**
+ * Only the desktop Host is parented by the Electron executable. A web Host is
+ * parented by whatever launched `dsh web` (shell, node CLI, service manager),
+ * and the desktop shell also exposes its UI on a loopback port — so a request
+ * Host with a port must never be treated as proof of web mode.
+ */
+function isDesktopParent(info) {
+	return info.found === true &&
+		typeof info.processName === 'string' &&
+		info.processName.toLowerCase() === APP_EXE_NAME.toLowerCase();
+}
+
 /** Ask WMI about the desktop parent process once; also the WMI availability probe. */
 async function diagnoseDesktop() {
 	const mainPid = typeof process.ppid === 'number' ? process.ppid : 0;
@@ -430,20 +442,29 @@ export function apply(ctx) {
 		const port = portFromHost(req.headers.host);
 		const now = Date.now();
 		const fresh = cachedDiagnosis !== undefined && now - cachedDiagnosisAt < DIAGNOSIS_TTL_MS;
-		if (fresh) {
-			if (port !== undefined && cachedDiagnosis.mode === 'web' && cachedDiagnosis.port === port) return cachedDiagnosis;
-			if (port === undefined && cachedDiagnosis.mode !== 'web' && cachedDiagnosis.mainPid === mainPid) return cachedDiagnosis;
+		if (fresh && cachedDiagnosis.mainPid === mainPid) {
+			// A desktop diagnosis does not depend on the request URL; a web one
+			// belongs to the exact port the browser reached.
+			if (cachedDiagnosis.mode !== 'web') return cachedDiagnosis;
+			if (port !== undefined && cachedDiagnosis.port === port) return cachedDiagnosis;
 		}
 
+		// Parent identity decides the mode, NOT the presence of a port: the
+		// desktop shell serves its UI over a loopback port too, so its Host
+		// request always carries one. Only the desktop Host has the Electron
+		// executable as its parent; a web Host is a child of a shell/CLI.
+		const parent = await diagnoseDesktop();
 		let diagnosis;
-		if (port !== undefined) {
+		if (isDesktopParent(parent)) {
+			diagnosis = parent;
+		} else if (port !== undefined) {
 			diagnosis = await diagnoseWeb(port);
 		} else {
 			// Host carried no port: ask our own --port first, then look for a
 			// listener that looks like a dsh web runtime. Cached because it is
 			// the expensive path, and our own port never changes while we live.
 			if (discoveredPort === undefined) discoveredPort = await discoverWebPort();
-			diagnosis = discoveredPort === undefined ? await diagnoseDesktop() : await diagnoseWeb(discoveredPort);
+			diagnosis = discoveredPort === undefined ? parent : await diagnoseWeb(discoveredPort);
 		}
 		cachedDiagnosis = diagnosis;
 		cachedDiagnosisAt = now;
@@ -458,7 +479,11 @@ export function apply(ctx) {
 		const diagnosis = await diagnoseCached(req);
 		const isWeb = diagnosis.mode === 'web';
 		const target = isWeb ? diagnosis.exe : diagnosis.exe ?? diagnosis.derivedExe;
-		const supported = diagnosis.found && typeof target === 'string' && target.toLowerCase().endsWith('.exe') && fs.existsSync(target);
+		// Defense in depth: if the parent probe failed and a desktop Host fell
+		// through to the web branch, its listener is the Electron executable.
+		// Never advertise or execute that as a web restart.
+		const desktopListener = isWeb === true && diagnosis.processName === APP_EXE_NAME;
+		const supported = !desktopListener && diagnosis.found && typeof target === 'string' && target.toLowerCase().endsWith('.exe') && fs.existsSync(target);
 		sendJson(res, 200, {
 			ok: true,
 			supported,
@@ -477,10 +502,10 @@ export function apply(ctx) {
 	};
 
 	/**
-	 * Shared exit pipeline behind both actions. Desktop: kill the app tree, the
-	 * helper relaunches the desktop exe. Web: kill the port listener and replay
-	 * its own command line on the same port. Responds and returns null on
-	 * failure, otherwise returns { mode, exe, delayMs }.
+	 * Shared exit pipeline behind both actions. Desktop: stop the shell, then
+	 * the Host, and relaunch the desktop exe. Web: kill the port listener and
+	 * replay its own command line on the same port. Responds and returns null
+	 * on failure, otherwise returns { mode, exe, delayMs }.
 	 */
 	const launchExit = async (req, res, quit) => {
 		const diagnosis = await diagnoseCached(req);
@@ -494,6 +519,13 @@ export function apply(ctx) {
 				sendJson(res, 409, {
 					ok: false,
 					error: 'no dsh web listener found on port ' + diagnosis.port + '; nothing to restart'
+				});
+				return null;
+			}
+			if (diagnosis.processName === APP_EXE_NAME) {
+				sendJson(res, 409, {
+					ok: false,
+					error: 'the listener is the desktop runtime, not a web service; refusing to kill it as a web restart'
 				});
 				return null;
 			}
@@ -537,12 +569,17 @@ export function apply(ctx) {
 		}
 
 		// Primary: WMI creates the helper as a child of the WMI provider, outside
-		// the target's process tree, so `taskkill /T` cannot take the helper down
-		// and the whole-tree kill is safe. Win32_ProcessStartup.ShowWindow = 0
-		// (SW_HIDE) makes the helper console hidden from birth — without it,
-		// PowerShell only hides itself after parsing -WindowStyle, so a window
-		// flashes briefly.
-		const switches = ['-TreeKill'];
+		// the target's process tree, so no target kill can take the helper down.
+		// Win32_ProcessStartup.ShowWindow = 0 (SW_HIDE) makes the helper console
+		// hidden from birth — without it, PowerShell only hides itself after
+		// parsing -WindowStyle, so a window flashes briefly.
+		//
+		// Desktop must stop the shell FIRST and the Host second. Killing the Host
+		// first makes the desktop shell report "host exited with 1" and open its
+		// fatal-recovery dialog — the very popup a one-click restart must avoid.
+		// A web restart is the opposite: the Host is the service, and the helper
+		// lives outside its tree, so a tree kill is both safe and sufficient.
+		const switches = isWeb ? ['-TreeKill'] : [];
 		if (quit) switches.push('-NoRelaunch');
 		const commandLine = ['powershell.exe', ...helperArgs, ...switches].join(' ');
 		const launcher = [
@@ -643,5 +680,6 @@ export const __test = {
 	deriveExeFromRuntime,
 	quoteArgument,
 	portFromHost,
-	splitArguments
+	splitArguments,
+	isDesktopParent
 };
