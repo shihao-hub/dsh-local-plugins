@@ -25,7 +25,31 @@
 | [`settings-button`](./settings-button) | `@local/settings-button` | 把「设置」入口搬到侧栏顶部面板列表（与模组/技能/接口同排）。两种底部形态自动识别：账号菜单形态（desktop）仅隐藏菜单里的「设置」项，账号按钮、意见反馈、退出登录全部保留；回退形态（web，无账号菜单）则隐藏底部原生「设置」按钮本身，同行连接状态指示器保留。点击新入口等价于点原来那一项，设置面板照旧打开。回归测试 [`dom-test.mjs`](./settings-button/dom-test.mjs)（jsdom，三种形态隐藏/还原/委托，20 项）。 |
 | [`agy-bridge`](./agy-bridge) | `@local/agy-bridge` | agy 只读调研桥（MCP stdio 服务）：把「安全调研/代码审计/Bug 诊断」委托给宿主机 Antigravity CLI 执行，全部调用固定 `agy -p ... --sandbox --mode plan --output-format json`（物理禁写、高危命令拦截，不带 skip-permissions），暴露 `research` 与 `list_models` 两个工具；桥接器零写盘，删 profile 里对应 patch 行即 100% 复原。 |
 | [`open-with-default-app`](./open-with-default-app) | `@local/open-with-default-app` | 对话与右侧预览里每个文件/目录上的**显式「用默认应用打开」按钮**：交付卡片与变更对照页注册进 `deliverables.file.actions` / `deliverables.review.file.actions`（走父级已鉴权交付路由，相对路径由宿主按 session 解析），预览标题栏与空态注册进 `sidebar.right.tab.document.actions` / `.unpreviewable`（走 `remote.session.openWorkspacePath({path})`，不传 application 才是 OS 关联）。补的两个缺口：① 内置预览控件依赖「每页只读一次」的桌面探测，该值为假时整页控件消失，本插件不依赖它；② 预览失败为 `not-regular-file`/`not-found` 时内置判定「无任何动作」（界面只剩「该路径不是普通文件」的死胡同），本插件标题栏按钮仍可用。纯客户端插件、零宿主路由、无 CSS 注入、无存储；回归测试 `test/self-test.mjs`（零依赖，84 项）+ [`test/dom-test.mjs`](./open-with-default-app/test/dom-test.mjs)（真 React 18 + jsdom，28 项）。注意一条宿主陷阱：cordis ctx 代理对**未 inject 的服务属性直读会抛错**（`ctx.remote` → `cannot get property "remote" without inject`，不是 undefined），旧版把它裸读进 `apply` 导致 fiber FAILED（`web boot: 1 entry did not activate`）；现改为 `ctx.get(name)` 为主 + 属性探测 try/catch。 |
-| [`session-tags`](./session-tags) | `@local/session-tags` | 会话**前端标签**：给侧栏会话打标（默认 待办/进行中/已完成/存档，可自建任意标签并支持父子层级），并在右侧栏提供**标签树**（标签 → 工作区 → 会话）浏览全部会话。四个入口：行「…」菜单「标签…」（`order: 350`，夹在 派生 与 归档 之间）、行尾 hover 按钮、行悬停卡片 chip、右侧栏页签。宿主**不给**「列表内重新分组」的挂载点（`sidebar.workspaces` 是 single slot，接管等于重写整块浏览区：搜索/分组/右键菜单/拖拽/对话框），故走加法式 —— 不动原生列表，标签树独立成右侧栏页类型（`ctx.sidebarRightTabs.register` + `sidebar.right.pane.tab`，键 `@local/session-tags/tree`）。数据只落 `localStorage["session-tags.v1"]`：零宿主写入、零 DOM 篡改、不依赖宿主 CSS Module 哈希（宿主类名是哈希，升级即断）。拖拽打标白捡宿主 `dragstart` 已写入的 `text/plain` session id；拖到「未打标」即清空。`node self-test.mjs` 19 项零依赖用例（存储兜底/跨区去重/已删标签过滤/孤儿标签升格/标题筛选）。 |
+| [`session-tags`](./session-tags) | `@local/session-tags` | 会话**前端标签**：左侧浏览区整块接管后**与原生同构**（段头三按钮、34px 工作区行、32px 会话行、hover 时时间让位给动作），差异只在「分组方式」多了标签——`按工作区` / **`按工作区 + 标签`（默认）** / `按标签` / `单列表`，另配 `最近更新|手动` 排序与 `隐藏已归档|全部|仅已归档` 筛选；菜单入口与原生同一处（段头滑块图标）。接管靠单值座的影子登记（`sidebar.workspaces`，宿主 `priority 0`，本插件 `priority: -1`，最低优先级渲染），切回原生是**运行时且不持久化**的（旧版本把 `native` 落盘造成「点一下就回不来」，已改为内存态 + 启动清残留键，刷新必回标签树；底部那个易误触的开关已删）。打标签：会话行 hover 按钮 / 拖到标签行上 / 原生模式下「…」→「标签…」；标签支持父子层级与 7 色板，数据只落 `localStorage`（`session-tags.v1` + `view` + `collapsed`）。已知没做：按工作区树（目录树）、工作区重命名/删除、会话拖拽排序——那些走原生列表。`node self-test.mjs` 23 项零依赖用例。 |
+
+---
+
+## 插件设置行来源标注约定
+
+「设置 → 通用设置」里的行来自两类注册方：DSH 内置包，以及本目录的本地插件。slot 账本里其实记着 `registrant`（谁注册的），但它只存在于渲染宿主内部、**不会落到 DOM**，所以由插件在自己那一行显式声明来源：
+
+| 要求 | 写法 |
+| :--- | :--- |
+| 行根节点标来源 | `'data-plugin-setting': '<行注册 id>'`、`'data-plugin-package': '@local/<包名>'` |
+| 标题后徽章 | `<span class="<前缀>_badge" title="…">插件</span>`（英文 `Plugin`） |
+| 文案 | 字典键 `row.badge` / `row.badgeTitle`（`{package}` 插值），zh、en 各一条 |
+| 样式 | 11px / 18px 高 / `1px solid var(--dsw-alias-border-l3)` / `border-radius:999px` / `--dsw-alias-label-tertiary` / `margin-left:8px` |
+
+已接入：`rider-theme`、`pin-highlight`、`active-session-highlight`、`running-session-highlight`、`model-favorites`（五行的注册 id 依次为 `rider-theme`、`pin-highlight`、`active-session-highlight`、`running-session-highlight`、`model-favorites-status`）。
+
+新插件接入时复制上面四行即可；不接入也不会报错，只是该行不会带来源徽章。`mod-renamer` 生效时「插件」会被它按全局术语精确替换成「模组」，属预期。
+
+校验（零依赖，逐文件断言属性、类名与中英字典）：
+
+```powershell
+cd D:\Users\dsh-local-plugins
+node tools\verify-settings-badges.mjs
+```
 
 ---
 

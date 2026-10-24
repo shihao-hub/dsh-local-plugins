@@ -41,6 +41,12 @@
       const STORE_KEY = 'pin-highlight.accent';
       const STYLE_TAG_ID = '@local/pin-highlight/rows.css';
       const DEFAULT_HEX = '#e2b341';
+      /**
+       * 设置行来源标注：通用设置里的这一行由本插件注册，而不是 DSH 内置项。
+       * `data-plugin-*` 是给统一识别与自动化验收用的稳定钩子；徽章文案走 locale。
+       */
+      const ROW_ID = 'pin-highlight';
+      const PLUGIN_PACKAGE = '@local/pin-highlight';
 
       /** Curated presets that hold up on both dark and light schemes. */
       const PRESETS = [
@@ -81,6 +87,7 @@
         '.php_head{display:flex;align-items:center;justify-content:space-between;gap:16px}',
         '.php_text{display:flex;flex-direction:column;gap:2px;min-width:0}',
         '.php_title{color:var(--dsw-alias-label-primary);font-size:14px;line-height:22px}',
+        '.php_badge{display:inline-flex;align-items:center;flex:none;margin-left:8px;padding:0 6px;height:18px;border:1px solid var(--dsw-alias-border-l3);border-radius:999px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-weight:400;letter-spacing:.02em;white-space:nowrap;vertical-align:middle}',
         '.php_desc{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
         '.php_controls{display:flex;align-items:center;gap:8px;flex:none}',
         '.php_swatch{box-sizing:border-box;flex:none;width:22px;height:22px;padding:0;border:1px solid var(--dsw-alias-border-l3);border-radius:6px;cursor:pointer}',
@@ -154,14 +161,30 @@
 
         return h(
           'div',
-          { className: 'php_group' },
+          {
+            className: 'php_group',
+            'data-plugin-setting': ROW_ID,
+            'data-plugin-package': PLUGIN_PACKAGE
+          },
           h(
             'div',
             { className: 'php_head' },
             h(
               'div',
               { className: 'php_text' },
-              h('div', { className: 'php_title' }, t('row.title')),
+              h(
+                'div',
+                { className: 'php_title' },
+                t('row.title'),
+                h(
+                  'span',
+                  {
+                    className: 'php_badge',
+                    title: t('row.badgeTitle', { package: PLUGIN_PACKAGE })
+                  },
+                  t('row.badge')
+                )
+              ),
               h('div', { className: 'php_desc' }, t('row.description'))
             ),
             h(
@@ -198,6 +221,8 @@
 
       const zh = {
         'row.title': '置顶图钉颜色',
+        'row.badge': '插件',
+        'row.badgeTitle': '由插件 {package} 提供',
         'row.description': '侧栏置顶会话图钉的颜色，改动即时生效',
         custom: '自定义颜色',
         reset: '默认',
@@ -209,6 +234,8 @@
       };
       const en = {
         'row.title': 'Pinned-session pin color',
+        'row.badge': 'Plugin',
+        'row.badgeTitle': 'Provided by plugin {package}',
         'row.description': 'Color of the pin marker on pinned sidebar sessions; applies instantly',
         custom: 'Custom color',
         reset: 'Default',

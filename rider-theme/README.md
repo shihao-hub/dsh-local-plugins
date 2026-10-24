@@ -6,7 +6,7 @@
 
 - `theme.register({ id: 'rider-dark', colorScheme: 'dark', tokens })` 注册主题；`client.js:TOKENS` 覆盖全部 116 个色彩型 `--dsw-*` 变量；
 - 配色实际走**插件自有 override layer**（`theme.overrideTokens`）：不依赖设置文档，所以宿主偏好写不进去时也照样能上色；
-- 通过 `settings.general.item` slot 注册设置行（zh/en 双语，含 `role="switch"` 无障碍语义）；
+- 通过 `settings.general.item` slot 注册设置行（zh/en 双语，含 `role="switch"` 无障碍语义），行标题后带「插件」胶囊（`data-plugin-setting="rider-theme"`，hover 显示包名），与 DSH 内置行区分；
 - 另一张 `--shiki-*` 样式表（`body[data-ds-dark-theme]` 作用域）负责代码高亮配色。
 
 ## 外观语义（v4：配色跟随基座 + 写入被拒时自维持深色 + 不覆盖你在「外观」里的最新选择）

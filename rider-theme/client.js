@@ -19,6 +19,12 @@
       const CSS_TAG_ID = '@local/rider-theme/row.css';
       const SHIKI_TAG_ID = '@local/rider-theme/shiki.css';
       const BUILTIN_PREFERENCES = ['light', 'dark', 'system'];
+      /**
+       * 设置行来源标注：通用设置里的这一行由本插件注册，而不是 DSH 内置项。
+       * `data-plugin-*` 是给统一识别与自动化验收用的稳定钩子；徽章文案走 locale。
+       */
+      const ROW_ID = 'rider-theme';
+      const PLUGIN_PACKAGE = '@local/rider-theme';
 
       /**
        * Token values must be a { light, dark } pair each; this theme is dark-only,
@@ -193,6 +199,7 @@
         '.rdt_head{display:flex;align-items:center;justify-content:space-between;gap:16px}',
         '.rdt_text{display:flex;flex-direction:column;gap:2px;min-width:0}',
         '.rdt_title{color:var(--dsw-alias-label-primary);font-size:14px;line-height:22px}',
+        '.rdt_badge{display:inline-flex;align-items:center;flex:none;margin-left:8px;padding:0 6px;height:18px;border:1px solid var(--dsw-alias-border-l3);border-radius:999px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-weight:400;letter-spacing:.02em;white-space:nowrap;vertical-align:middle}',
         '.rdt_desc{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
         '.rdt_switch{box-sizing:border-box;flex:none;width:36px;height:20px;padding:2px;border:0;border-radius:10px;background:var(--dsw-alias-border-l3);cursor:pointer;display:flex;align-items:center;transition:background .15s ease}',
         '.rdt_switch.rdt_on{background:var(--dsw-alias-brand-primary)}',
@@ -245,6 +252,8 @@
         }, label);
 
       const zh = {
+        'row.badge': '插件',
+        'row.badgeTitle': '由插件 {package} 提供',
         'row.description': '来自 Zed 主题包的 JetBrains Rider 深色配色',
         'row.enable': '启用 JetBrains Rider Dark',
         'row.disable': '停用 JetBrains Rider Dark',
@@ -258,6 +267,8 @@
           '外观偏好没能写入设置文件（常见原因是该文件正被编辑器等其它程序占用）：基座不是深色，配色已自动撤下，本主题暂不生效。请关闭占用该文件的程序后重新开关一次。'
       };
       const en = {
+        'row.badge': 'Plugin',
+        'row.badgeTitle': 'Provided by plugin {package}',
         'row.description': 'JetBrains Rider dark palette, ported from the Zed theme package',
         'row.enable': 'Enable JetBrains Rider Dark',
         'row.disable': 'Disable JetBrains Rider Dark',
@@ -734,14 +745,30 @@
 
           return h(
             'div',
-            { className: 'rdt_group' },
+            {
+              className: 'rdt_group',
+              'data-plugin-setting': ROW_ID,
+              'data-plugin-package': PLUGIN_PACKAGE
+            },
             h(
               'div',
               { className: 'rdt_head' },
               h(
                 'div',
                 { className: 'rdt_text' },
-                h('div', { className: 'rdt_title' }, THEME_LABEL),
+                h(
+                  'div',
+                  { className: 'rdt_title' },
+                  THEME_LABEL,
+                  h(
+                    'span',
+                    {
+                      className: 'rdt_badge',
+                      title: t('row.badgeTitle', { package: PLUGIN_PACKAGE })
+                    },
+                    t('row.badge')
+                  )
+                ),
                 h('div', { className: 'rdt_desc' }, t('row.description'))
               ),
               h(

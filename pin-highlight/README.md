@@ -29,6 +29,7 @@ hover 态的按钮用结构选择器定位（`:has(> .pinIndicator)` 限定置�
 - **彩虹自定义块**：点击打开 Chromium 原生色盘（HSV 面板 + 色相条 + 吸管 + HEX 输入）
 - **「默认」按钮**：仅在自定义后出现，一键回到主题 warn 色
 - 选择持久化到 `localStorage`（`pin-highlight.accent`），启动时自动恢复；改动通过 `<html>` 上的 inline CSS 变量即时生效，无需刷新
+- 行标题后带「插件」胶囊（`data-plugin-setting="pin-highlight"`，hover 显示包名），与 DSH 内置设置行区分
 
 ![通用设置里的色盘行（左：选色即时作用于侧栏图钉）](./settings.png)
 

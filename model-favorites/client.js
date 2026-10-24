@@ -38,6 +38,8 @@
 
       const PLUGIN_ID = '@local/model-favorites';
       const NS = 'model-favorites';
+      /** 设置行来源标注：通用设置里的状态行由本插件注册，而不是 DSH 内置项。 */
+      const ROW_ID = 'model-favorites-status';
       const CSS_TAG_ID = '@local/model-favorites/ModelSelect.module.css';
       const STORAGE_KEY = '@local/model-favorites:favorites:v1';
       const FAVORITES_GROUP_ID = '@favorites';
@@ -135,6 +137,8 @@
         'favorite.add': '收藏该模型',
         'favorite.remove': '取消收藏',
         'settings.title': '模型收藏',
+        'settings.badge': '插件',
+        'settings.badgeTitle': '由插件 {package} 提供',
         'settings.seatTaken': '已接管模型选择器（星标 + provider 标注已启用）',
         'settings.waiting': '已加载，等待接管模型选择器…',
         'settings.registerFailed': '注册失败，请查看控制台日志',
@@ -166,6 +170,8 @@
         'favorite.add': 'Favorite this model',
         'favorite.remove': 'Remove from favorites',
         'settings.title': 'Model favorites',
+        'settings.badge': 'Plugin',
+        'settings.badgeTitle': 'Provided by plugin {package}',
         'settings.seatTaken': 'Selector taken over (stars + provider captions enabled)',
         'settings.waiting': 'Loaded, waiting to take over the model selector…',
         'settings.registerFailed': 'Registration failed, see the console log',
@@ -247,7 +253,8 @@
         '.mfs_cellChevron{width:12px;height:12px;color:var(--dsw-alias-menu-icon);flex:none}',
         '.mfs_statusRow{align-items:baseline;gap:8px;padding:2px 0;display:flex}',
         '.mfs_statusTitle{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600}',
-        '.mfs_statusValue{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}'
+        '.mfs_statusValue{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+        '.mfs_badge{display:inline-flex;align-items:center;flex:none;margin-left:8px;padding:0 6px;height:18px;border:1px solid var(--dsw-alias-border-l3);border-radius:999px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-weight:400;letter-spacing:.02em;white-space:nowrap;vertical-align:middle}'
       ].join('');
 
       const css = {
@@ -285,7 +292,8 @@
         cellChevron: 'mfs_cellChevron',
         statusRow: 'mfs_statusRow',
         statusTitle: 'mfs_statusTitle',
-        statusValue: 'mfs_statusValue'
+        statusValue: 'mfs_statusValue',
+        badge: 'mfs_badge'
       };
 
       /** Filled/outline star drawn inline; the theme ships no matching glyph. */
@@ -1171,10 +1179,19 @@
       function StatusRow({ t }) {
         return jsxRuntime.jsxs('div', {
           className: css.statusRow,
+          'data-plugin-setting': ROW_ID,
+          'data-plugin-package': PLUGIN_ID,
           children: [
-            jsxRuntime.jsx('span', {
+            jsxRuntime.jsxs('span', {
               className: css.statusTitle,
-              children: t('settings.title')
+              children: [
+                t('settings.title'),
+                jsxRuntime.jsx('span', {
+                  className: css.badge,
+                  title: t('settings.badgeTitle', { package: PLUGIN_ID }),
+                  children: t('settings.badge')
+                })
+              ]
             }),
             jsxRuntime.jsx('span', {
               className: css.statusValue,

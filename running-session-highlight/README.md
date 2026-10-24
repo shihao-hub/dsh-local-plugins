@@ -53,6 +53,7 @@ div[data-row-key^="session:"]:has(svg[data-state="ongoing"]) {
 - **彩虹自定义块**：Chromium 原生色盘（HSV 面板 + 色相条 + 吸管 + HEX）
 - **「默认」按钮**：仅在自定义后出现，一键回到主题 business 色
 - 选择持久化到 `localStorage`（`running-session-highlight.accent`），启动自动恢复；改动通过 `<html>` 内联 `--dsh-running-accent` 即时生效，无需刷新
+- 行标题后带「插件」胶囊（`data-plugin-setting="running-session-highlight"`，hover 显示包名），与 DSH 内置设置行区分
 
 ## 与两个兄弟插件的关系
 

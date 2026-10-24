@@ -53,6 +53,7 @@ div[data-row-key^="session:"][aria-selected="true"] {
 - **彩虹自定义块**：Chromium 原生色盘（HSV 面板 + 色相条 + 吸管 + HEX）
 - **「默认」按钮**：仅在自定义后出现，一键回到主题 business 色（Rider Dark `#75beff` / 原生深色 `#7aaaff` / 浅色 `#4176e6`）
 - 选择持久化到 `localStorage`（`active-session-highlight.accent`），启动自动恢复；改动通过 `<html>` 内联 `--dsh-active-row-accent` 即时生效，无需刷新
+- 行标题后带「插件」胶囊（`data-plugin-setting="active-session-highlight"`，hover 显示包名），与 DSH 内置设置行区分
 
 ## 依赖的 DOM 契约（App 更新若改版需回来对照）
 

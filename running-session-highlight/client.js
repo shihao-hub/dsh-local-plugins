@@ -56,6 +56,12 @@
       const STORE_KEY = 'running-session-highlight.accent';
       const STYLE_TAG_ID = '@local/running-session-highlight/rows.css';
       const DEFAULT_HEX = '#4176e6';
+      /**
+       * 设置行来源标注：通用设置里的这一行由本插件注册，而不是 DSH 内置项。
+       * `data-plugin-*` 是给统一识别与自动化验收用的稳定钩子；徽章文案走 locale。
+       */
+      const ROW_ID = 'running-session-highlight';
+      const PLUGIN_PACKAGE = '@local/running-session-highlight';
 
       /** 与 pin-highlight / active-session-highlight 同一套色值，跨插件配色语言统一。 */
       const PRESETS = [
@@ -113,6 +119,7 @@
         '.rsh_head{display:flex;align-items:center;justify-content:space-between;gap:16px}',
         '.rsh_text{display:flex;flex-direction:column;gap:2px;min-width:0}',
         '.rsh_title{color:var(--dsw-alias-label-primary);font-size:14px;line-height:22px}',
+        '.rsh_badge{display:inline-flex;align-items:center;flex:none;margin-left:8px;padding:0 6px;height:18px;border:1px solid var(--dsw-alias-border-l3);border-radius:999px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-weight:400;letter-spacing:.02em;white-space:nowrap;vertical-align:middle}',
         '.rsh_desc{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
         '.rsh_controls{display:flex;align-items:center;gap:8px;flex:none}',
         '.rsh_swatch{box-sizing:border-box;flex:none;width:22px;height:22px;padding:0;border:1px solid var(--dsw-alias-border-l3);border-radius:6px;cursor:pointer}',
@@ -186,14 +193,30 @@
 
         return h(
           'div',
-          { className: 'rsh_group' },
+          {
+            className: 'rsh_group',
+            'data-plugin-setting': ROW_ID,
+            'data-plugin-package': PLUGIN_PACKAGE
+          },
           h(
             'div',
             { className: 'rsh_head' },
             h(
               'div',
               { className: 'rsh_text' },
-              h('div', { className: 'rsh_title' }, t('row.title')),
+              h(
+                'div',
+                { className: 'rsh_title' },
+                t('row.title'),
+                h(
+                  'span',
+                  {
+                    className: 'rsh_badge',
+                    title: t('row.badgeTitle', { package: PLUGIN_PACKAGE })
+                  },
+                  t('row.badge')
+                )
+              ),
               h('div', { className: 'rsh_desc' }, t('row.description'))
             ),
             h(
@@ -230,6 +253,8 @@
 
       const zh = {
         'row.title': '运行中会话高亮颜色',
+        'row.badge': '插件',
+        'row.badgeTitle': '由插件 {package} 提供',
         'row.description': '侧栏正在运行的会话：呼吸底纹与转圈颜色，改动即时生效',
         custom: '自定义颜色',
         reset: '默认',
@@ -241,6 +266,8 @@
       };
       const en = {
         'row.title': 'Running-session highlight color',
+        'row.badge': 'Plugin',
+        'row.badgeTitle': 'Provided by plugin {package}',
         'row.description': 'Breathing tint and spinner color for sessions that are running; applies instantly',
         custom: 'Custom color',
         reset: 'Default',

@@ -15,6 +15,7 @@ Composer 模型选择器的 Zed 风格「收藏」增强插件（纯客户端模
 - **搜索/键盘兼容**：收藏分组作为第一个分组参与模糊搜索过滤、↑/↓ 高亮、Enter/Tab 选中、粘性分组标题。
 - **菜单随内容重排**：星标/取消星标会让菜单变高变矮（收藏分组出现、分组被收藏清空、搜索框出现），重排依赖里带上 `filteredGroups`/`showSearch`，内容一变化就在同一次 commit 内把菜单底边重新贴回触发器上方 8px，避免"只往下长、压住输入框"。
 - **持久化**：`localStorage` 键 `@local/model-favorites:favorites:v1`（`provider/model` id 数组，写入顺序为收藏先后，展示时倒序 = 最近收藏在上），重启保留、多标签同步。
+- **设置页来源标注**：通用设置里的「模型收藏」状态行标题后带「插件」胶囊（`data-plugin-setting="model-favorites-status"`，hover 显示包名），与 DSH 内置行区分。
 
 ## 实现原理（重要）
 
