@@ -11,6 +11,8 @@
       const PANEL_ID = 'excalidraw-panel';
       const NS = 'excalidraw-panel';
       const CSS_TAG_ID = 'excalidraw-panel-styles';
+      /** 右侧栏标签页的 kind（同时是 pane.tab / title 两个 slot 的 key）。 */
+      const TAB_KIND = 'excalidraw';
       /** 画板站点；官方 excalidraw.com 的中文镜像，支持直接 iframe 嵌入。 */
       const EXCALIDRAW_URL = 'https://excalidraw.cn/';
       /** 超过该时长仍未触发 iframe load 时，给出慢加载提示。 */
@@ -21,6 +23,9 @@
         panel: '画板',
         title: '画板',
         subtitle: 'Excalidraw · 自动保存到本机',
+        tabTitle: '画板',
+        guideTitle: 'Excalidraw 画板',
+        guideDescription: '在右栏打开手绘白板，和对话同屏',
         reload: '刷新',
         reloadHint: '重新加载画板（手绘内容保存在应用本地存储中，不会丢失）',
         openExternal: '浏览器打开',
@@ -35,6 +40,9 @@
         panel: 'Whiteboard',
         title: 'Whiteboard',
         subtitle: 'Excalidraw · saved locally',
+        tabTitle: 'Whiteboard',
+        guideTitle: 'Excalidraw whiteboard',
+        guideDescription: 'Open a hand-drawn whiteboard beside the conversation',
         reload: 'Reload',
         reloadHint: 'Reload the whiteboard (drawings are stored locally and kept)',
         openExternal: 'Open in browser',
@@ -64,6 +72,8 @@
         '.exp_btn[data-primary="true"]:hover{background:#3f5ce0;color:#fff}',
         '.exp_frameWrap{position:relative;flex:1;min-height:0;overflow:hidden;background:#fff}',
         '.exp_frame{display:block;width:100%;height:100%;border:0;background:#fff}',
+        '.exp_tabBody{position:relative;display:flex;flex:1;min-height:0;height:100%;overflow:hidden;background:#fff}',
+        '.exp_tabTitle{display:block;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}',
         '.exp_overlay{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;text-align:center;background:var(--dsw-alias-surface-primary);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6;opacity:1;transition:opacity .2s ease;pointer-events:none}',
         '.exp_overlay[data-hidden="true"]{opacity:0}',
         '.exp_spinner{width:18px;height:18px;border-radius:50%;border:2px solid var(--dsw-alias-border-l2);border-top-color:#4d6bfe;animation:exp_spin .8s linear infinite;flex:none}',
@@ -194,7 +204,48 @@
         );
       }
 
-      const inject = ['slots', 'locale'];
+      /** Right sidebar tab body: the same board, without the main-surface header. */
+      function ExcalidrawTabBody(props) {
+        const t = typeof props?.t === 'function' ? props.t : fallbackT;
+        const [loaded, setLoaded] = React.useState(false);
+        const [slow, setSlow] = React.useState(false);
+
+        React.useEffect(() => {
+          const timer = window.setTimeout(() => setSlow(true), SLOW_HINT_DELAY);
+          return () => window.clearTimeout(timer);
+        }, []);
+
+        return h(
+          'div',
+          { className: 'exp_tabBody' },
+          h('iframe', {
+            className: 'exp_frame',
+            src: EXCALIDRAW_URL,
+            title: t('iframeTitle'),
+            allow: 'clipboard-read; clipboard-write; fullscreen',
+            referrerPolicy: 'strict-origin-when-cross-origin',
+            onLoad: () => setLoaded(true)
+          }),
+          h(
+            'div',
+            {
+              className: 'exp_overlay',
+              'data-hidden': loaded ? 'true' : 'false',
+              'aria-hidden': 'true'
+            },
+            h('span', { className: 'exp_spinner' }),
+            h('span', null, slow ? t('slow') : t('loading'))
+          )
+        );
+      }
+
+      /** Title chip of the right sidebar tab. */
+      function ExcalidrawTabTitle(props) {
+        const t = typeof props?.t === 'function' ? props.t : fallbackT;
+        return h('span', { className: 'exp_tabTitle' }, t('tabTitle'));
+      }
+
+      const inject = ['slots', 'locale', 'sidebarRightTabs'];
 
       function apply(ctx) {
         ctx.effect(() => {
@@ -238,6 +289,50 @@
             ExcalidrawGlyph
           )
         );
+
+        // 右侧栏「开始」页的快捷卡片 + 画板标签页：与对话同屏，不替换主区。
+        ctx.effect(
+          () =>
+            ctx.sidebarRightTabs.register({
+              id: PANEL_ID,
+              kind: TAB_KIND,
+              keepMounted: true,
+              title: () => t('tabTitle'),
+              guide: [
+                {
+                  id: 'open',
+                  order: 25,
+                  title: () => t('guideTitle'),
+                  description: () => t('guideDescription'),
+                  icon: ExcalidrawGlyph
+                }
+              ]
+            }),
+          'excalidraw-panel: right sidebar tab type'
+        );
+
+        // 右侧栏标签内容与标题按「类型 id」寻址（TabSlot 的 entryKey 取定义 id，不是 kind）。
+        ctx.slots.inject('sidebar.right.pane.tab', () =>
+          ctx.slots.register(
+            {
+              name: 'sidebar.right.pane.tab',
+              key: PANEL_ID,
+              locale: NS
+            },
+            ExcalidrawTabBody
+          )
+        );
+
+        ctx.slots.inject('sidebar.right.pane.tab.title', () =>
+          ctx.slots.register(
+            {
+              name: 'sidebar.right.pane.tab.title',
+              key: PANEL_ID,
+              locale: NS
+            },
+            ExcalidrawTabTitle
+          )
+        );
       }
 
       return {
@@ -246,7 +341,10 @@
         __test: {
           ExcalidrawPanel,
           ExcalidrawGlyph,
+          ExcalidrawTabBody,
+          ExcalidrawTabTitle,
           EXCALIDRAW_URL,
+          TAB_KIND,
           zh,
           en,
           CSS

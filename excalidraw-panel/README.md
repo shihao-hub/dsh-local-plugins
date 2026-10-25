@@ -10,8 +10,14 @@
 | :--- | :--- |
 | 侧栏面板列表 | 位于「接口」与「设置」之间的「画板」行（`order: 25`） |
 | 主区面板 | 顶栏：标题、自动保存提示、「刷新」、「浏览器打开」；下方为嵌入的 Excalidraw |
+| 右栏「开始」页 | 「Excalidraw 画板」卡片（与「工作区文件」「新建终端」同排，`guide order: 25`）；点击后在右栏打开画板标签页，与对话同屏，不替换主区 |
 | 数据保存 | Excalidraw 自身的 localStorage 自动保存（iframe 独立 origin），刷新面板或重启应用都不丢 |
 | 加载反馈 | iframe `load` 前显示加载遮罩；12 秒仍未完成时提示检查网络 |
+
+右栏标签页通过 `ctx.sidebarRightTabs.register` 注册一个 `kind: 'excalidraw'`、`id:
+'excalidraw-panel'` 的类型，并带 `keepMounted: true`：从画板切到别的标签再切回来，iframe
+不会重载。标签内容与标题分别注册在 `sidebar.right.pane.tab` / `.title`，其 `key` 必须等于
+**类型 id**（`excalidraw-panel`）——宿主 `TabSlot` 的 `entryKey` 取的是定义 id，不是 kind。
 
 「浏览器打开」调用 `window.open`，在系统默认浏览器中打开同一个站点；宿主若拦截弹窗，
 面板本身不受影响。
@@ -44,7 +50,8 @@ node D:\Users\dsh-local-plugins\excalidraw-panel\self-test.mjs
 ```
 
 零依赖：在 `node:vm` 中执行 `client.js`，校验 slot 注册（`main` key 与侧栏 id 一致、
-`order: 25`）、站点常量、中英字典键一致与关键 CSS。
+`order: 25`）、右侧栏标签类型（`kind`/`id`/`guide`/`keepMounted` 与 pane.tab 的 key 对齐）、
+站点常量、中英字典键一致与关键 CSS。
 
 ## 文件
 
