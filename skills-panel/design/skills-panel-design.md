@@ -295,3 +295,15 @@ $env:DSH_TEST_SKILLS_ROOT='C:\Users\29580\.agents\skills'; node design/preview-t
 ```
 
 `Sh › Lark` 是 `sh-lark-*`，和 `lark-*` 撞名所以升级成完整路径。`preview-tree.mjs` 里的 4 个内置技能是模拟的（office-* 三个 + 无 path 的 dsh-badge），用来验证来源分桶；真实目录只有那 105 项。
+
+### 8.4 后续变更（2026-10）：去掉命名空间树
+
+应使用反馈，面板不再按 `-` 分段聚类成多级树，改为「来源分组 + 组内平铺」，上面 8.1 描述的树形推导仅作为历史记录保留：
+
+- `groupedSkills` 每个来源一个 section，`skills` 即该来源全部技能（按名称排序），`children` 恒为空；
+- `buildSegmentTree` / `segmentLabel` / `altsFor` / `countSkills` 与 `DISPLAY_ALIASES` 别名表一并删除；
+- 渲染层去掉 `renderNodes` 递归，`renderSections` 直接 `renderRows(section.skills, 2)`；
+- 分组头仍可折叠（key 仍是来源 id：`workspace` / `user` / `builtin`），搜索仍强制展开并把命中行展开；
+- 「默认 / 全部」视图逻辑不变，差别仍是是否过滤 `sourceOf(...) === 'workspace'`；
+- 「查看 SKILL.md」不再走 `sidebarRight.openResource`：本面板是全局 `main` 面，显示时没有屏上会话，宿主会抛 `no session surface is mounted`，旧代码 `catch` 吞掉后表现为"点了毫无反应"。现在与两个目录按钮同走 `remote.session.openWorkspacePath`，用系统默认软件打开，`sidebarRight` 依赖与 `canOpenResource` 一并删除；
+- 回归：`node design/test-grouping.mjs`（真实目录平铺校验）、`node design/test-render.mjs`（含「默认视图隐藏工作区技能 → 切到全部后出现工作区 section」）、`node design/test-actions.mjs`（含无 `sidebarRight`、无 remote 通道两种环境）。

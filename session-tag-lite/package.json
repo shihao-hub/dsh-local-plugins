@@ -1,0 +1,37 @@
+{
+  "name": "@local/session-tag-lite",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lightweight front-end session tags: mark Sessions with free-form tags plus fixed todo / archive semantics, set a due date, and browse everything by tag in an overlay panel. Only tags Sessions through the host's open seats; never re-renders the left sidebar. Data stays in the browser's localStorage.",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  }
+}

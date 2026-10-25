@@ -27,6 +27,46 @@
 | [`agy-bridge`](./agy-bridge) | `@local/agy-bridge` | agy 只读调研桥（MCP stdio 服务）：把「安全调研/代码审计/Bug 诊断」委托给宿主机 Antigravity CLI 执行，全部调用固定 `agy -p ... --sandbox --mode plan --output-format json`（物理禁写、高危命令拦截，不带 skip-permissions），暴露 `research` 与 `list_models` 两个工具；桥接器零写盘，删 profile 里对应 patch 行即 100% 复原。 |
 | [`open-with-default-app`](./open-with-default-app) | `@local/open-with-default-app` | 对话与右侧预览里每个文件/目录上的**显式「用默认应用打开」按钮**：交付卡片与变更对照页注册进 `deliverables.file.actions` / `deliverables.review.file.actions`（走父级已鉴权交付路由，相对路径由宿主按 session 解析），预览标题栏与空态注册进 `sidebar.right.tab.document.actions` / `.unpreviewable`（走 `remote.session.openWorkspacePath({path})`，不传 application 才是 OS 关联）。补的两个缺口：① 内置预览控件依赖「每页只读一次」的桌面探测，该值为假时整页控件消失，本插件不依赖它；② 预览失败为 `not-regular-file`/`not-found` 时内置判定「无任何动作」（界面只剩「该路径不是普通文件」的死胡同），本插件标题栏按钮仍可用。纯客户端插件、零宿主路由、无 CSS 注入、无存储；回归测试 `test/self-test.mjs`（零依赖，84 项）+ [`test/dom-test.mjs`](./open-with-default-app/test/dom-test.mjs)（真 React 18 + jsdom，28 项）。注意一条宿主陷阱：cordis ctx 代理对**未 inject 的服务属性直读会抛错**（`ctx.remote` → `cannot get property "remote" without inject`，不是 undefined），旧版把它裸读进 `apply` 导致 fiber FAILED（`web boot: 1 entry did not activate`）；现改为 `ctx.get(name)` 为主 + 属性探测 try/catch。 |
 | [`session-tags`](./session-tags) | `@local/session-tags` | 会话**前端标签**：左侧浏览区整块接管后**与原生同构**（段头三按钮、34px 工作区行、32px 会话行、hover 时时间让位给动作），差异只在「分组方式」多了标签——`按工作区` / **`按工作区 + 标签`（默认）** / `按标签` / `单列表`，另配 `最近更新|手动` 排序与 `隐藏已归档|全部|仅已归档` 筛选；菜单入口与原生同一处（段头滑块图标）。接管靠单值座的影子登记（`sidebar.workspaces`，宿主 `priority 0`，本插件 `priority: -1`，最低优先级渲染），切回原生是**运行时且不持久化**的（旧版本把 `native` 落盘造成「点一下就回不来」，已改为内存态 + 启动清残留键，刷新必回标签树；底部那个易误触的开关已删）。打标签：会话行 hover 按钮 / 拖到标签行上 / 原生模式下「…」→「标签…」；标签支持父子层级与 7 色板，数据只落 `localStorage`（`session-tags.v1` + `view` + `collapsed`）。已知没做：按工作区树（目录树）、工作区重命名/删除、会话拖拽排序——那些走原生列表。`node self-test.mjs` 23 项零依赖用例。 |
+| [`sidebar-label-alias`](./sidebar-label-alias) | `@local/sidebar-label-alias` | 把侧栏官方项「自动化任务」显示为「任务」，与其它两字面板名（模组/技能/接口/画板/设置/标签）对齐。该项由 `ui-schedule` 的 `sidebar.panellist` slot 注册、label 取自它自己的 locale 命名空间（同 namespace 同语言重复注册会直接抛错），slot 注册项又只读，插件层没有可写的覆盖点，所以只改渲染结果：限定 `<nav>` 内面板行的 `aria-label` 与标题 span，折叠态连 tooltip 一起改；页面标题、空状态、搜索框、任务卡片一律保持官方原文。换词只改 `client.js` 顶部两个常量。 |
+| [`session-tag-lite`](./session-tag-lite) | `@local/session-tag-lite` | 会话**轻量前端标签**：不接管左侧栏，只在宿主开放座位上打标签——行尾「色盘」按钮（`conic-gradient` 把该会话多标签颜色合成一个圆盘：1 色纯色圆、≥2 色等分扇区、无标签空心圆，不再平铺彩色小点）、「…」菜单「标签…」、悬停卡片标签 chip + 截止徽章；**刻意不碰行首 `sidebar.session.row.leading`**（那是宿主放未读/待回答状态点的位置，塞色点会被误读成状态）。浮层「会话标签」弹窗 = 自由标签 pills + 全库标签池 chips + 新建输入（Enter/逗号，**自动分配未被使用过的颜色**）+ **点 pill 色点改色**（7 色板）+ 截止日期；浮层「标签总览」面板按 `待办 / 归档 / 自定义标签 / 未打标` 浏览，搜索同时匹配标签名与会话标题。面板做出两级视觉（组头 30px/600 字重 + `bg-layer-2` 底条 + 计数 pill；子项 26px/11px + 13px 缩进 + 1px 引导线），保留组浏览态常显（空也留骨架），「未打标」默认折叠、展开先露 15 条 +「显示全部 N 个」。**持久化**：Host 半区 `inject: ['webServer']` 注册 `GET/PUT /plugins/session-tag-lite/state`（自定义头 + 同源 Origin 校验，临时文件 + rename 原子写）落盘 `~/.dsh/session-tag-lite/state.json`；Client 本地优先同步——本地为空才用远端恢复（新浏览器/清站点数据不丢），本地有数据则推上去覆盖，路由不存在时静默退回纯 `localStorage`（`session-tag-lite.v1`，含 `colors` 映射）。Host 代码改动后需 `plugin_manager set_plugin` 停用/启用一次（或重启 `dsh web`）才加载新模块。与 `session-tags` 的 id/order/键完全独立、可并存。`node self-test.mjs` 48 项零依赖用例。 |
+
+---
+
+## DSH Web GUI 的浏览器认证（给 agent 的 chrome-devtools 用）
+
+现象：`chrome-devtools` 直接打开 `http://127.0.0.1:11111` 只会拿到
+`dsh web authentication required; reopen the URL printed by dsh web.`。该端口只认两样东西：
+
+| 凭证 | 生命周期 | 能否事后取得 |
+| :--- | :--- | :--- |
+| `?token=` 启动令牌 | 每个 `dsh web` 进程随机一份 | 不能。只打印在该进程 stdout，父进程退出即丢 |
+| `dsh-auth-*` 会话 cookie | 30 天（`cookieMaxAgeDays` 默认 30） | **能**。签名密钥持久化在 `~/.dsh/.credentials.yaml` 的 `client-connection/browser-session` |
+
+所以既不用重启服务、也不用杀宿主进程：拿持久 secret 自签一个 cookie 就行。
+
+```powershell
+cd D:\Users\dsh-local-plugins
+.\tools\dsh-gui-auth.ps1 -Verify   # 只校验，打印 HTTP 状态（200/303 = 通过，401 = secret 已换）
+.\tools\dsh-gui-auth.ps1           # 生成 %TEMP%\dsh-gui-cookie.txt，cookie 值不打印
+```
+
+把该文件交给 `chrome-devtools` 的 `upload_file`（先在 401 页面上放一个 `input[type=file]`），
+页面里执行：
+
+```js
+const t = (await input.files[0].text()).trim();
+document.cookie = t + '; path=/; SameSite=Strict';
+```
+
+刷新一次即登录成功，此后 30 天内同一浏览器 profile 直接可用；`dsh web` 重启也不失效
+（secret 是持久的），到期再跑一次脚本即可。临时文件用完立即删除，不要把 cookie 写进日志或提交。
+
+边界说明：服务端下发的是 HttpOnly cookie，但校验只读 Cookie header，所以页面 JS 写入的同名
+cookie 同样有效。这条通道只用于本机同一用户的自测——能读出 `.credentials.yaml` 的人本来就
+已经拥有这台机器上的会话数据，不构成新的越权面。
+
+> 脚本保持纯 ASCII：Windows PowerShell 5.1 按 ANSI(GBK) 解析 `.ps1`，UTF-8 无 BOM 的中文会
+> 吞掉字符串结束引号（`（401）` 直接导致 ParseException）。
 
 ---
 

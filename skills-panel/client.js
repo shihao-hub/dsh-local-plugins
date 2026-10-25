@@ -36,21 +36,6 @@
       // In-memory fallback catalog for resilient display across sessions
       const globalSkillsCache = new Map();
 
-      const DISPLAY_ALIASES = {
-        'agy': 'Antigravity',
-        'cc': 'Claude Code',
-        'sh': 'SH',
-        'doc': 'Doc',
-        'im': 'IM',
-        'vc': 'Video Conf',
-        'okr': 'OKR',
-        'pwsh7': 'PowerShell 7',
-        'uwp': 'UWP',
-        'sql': 'SQL',
-        'tdd': 'TDD',
-        'zed': 'Zed'
-      };
-
       const CSS = [
         '.skp_root{display:flex;flex-direction:column;height:100%;color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family-base,sans-serif);background:var(--dsw-alias-surface-primary);box-sizing:border-box}',
         '.skp_header{display:flex;align-items:center;gap:8px;padding:12px 14px 10px;border-bottom:.5px solid var(--dsw-alias-border-l1);flex:none}',
@@ -125,7 +110,7 @@
         'openFile': '\u67e5\u770b SKILL.md',
         'openDir': '\u6253\u5f00\u76ee\u5f55',
         'revealDir': '\u5b9a\u4f4d\u76ee\u5f55',
-        'openFileDesc': '\u5728\u53f3\u4fa7\u9884\u89c8 SKILL.md',
+        'openFileDesc': '\u7528\u9ed8\u8ba4\u8f6f\u4ef6\u6253\u5f00 SKILL.md',
         'openDirDesc': '\u5728\u7cfb\u7edf\u7f16\u8f91\u5668/\u6587\u4ef6\u5939\u4e2d\u6253\u5f00\u6b64\u6280\u80fd\u76ee\u5f55',
         'revealDirDesc': '\u5728\u6587\u4ef6\u8d44\u6e90\u7ba1\u7406\u5668\u4e2d\u9ad8\u4eae\u5b9a\u4f4d',
         'noResult': '\u6ca1\u6709\u5339\u914d\u7684\u6280\u80fd',
@@ -160,7 +145,7 @@
         'openFile': 'View SKILL.md',
         'openDir': 'Open Folder',
         'revealDir': 'Reveal',
-        'openFileDesc': 'Preview SKILL.md in right sidebar',
+        'openFileDesc': 'Open SKILL.md in its default app',
         'openDirDesc': 'Open skill folder in local editor',
         'revealDirDesc': 'Reveal skill folder in file manager',
         'noResult': 'No matching skills',
@@ -342,60 +327,7 @@
       }
       //#endregion
 
-      //#region segment tree algorithm
-      function segmentLabel(seg) {
-        const lower = seg.toLowerCase();
-        const known = DISPLAY_ALIASES[lower];
-        return known ?? (seg.charAt(0).toUpperCase() + seg.slice(1));
-      }
-
-      function buildSegmentTree(skills, depth = 0, pathPrefix = '') {
-        const buckets = new Map();
-        const directLeaves = [];
-
-        for (const skill of skills) {
-          const parts = skill.name.split('-');
-          if (parts.length <= depth + 1) {
-            directLeaves.push(skill);
-          } else {
-            const seg = parts[depth];
-            if (!buckets.has(seg)) buckets.set(seg, []);
-            buckets.get(seg).push(skill);
-          }
-        }
-
-        const children = [];
-        const sortedKeys = [...buckets.keys()].sort((a, b) => a.localeCompare(b));
-
-        for (const seg of sortedKeys) {
-          const groupSkills = buckets.get(seg);
-          const nextPrefix = pathPrefix ? `${pathPrefix}/${seg}` : seg;
-          const sub = buildSegmentTree(groupSkills, depth + 1, nextPrefix);
-
-          children.push({
-            id: nextPrefix,
-            label: segmentLabel(seg),
-            children: sub.children,
-            skills: sub.remainder
-          });
-        }
-
-        return {
-          children,
-          remainder: directLeaves.sort((a, b) => a.name.localeCompare(b.name))
-        };
-      }
-
-      function altsFor(remainder, t, source) {
-        if (remainder.length === 0) return undefined;
-        return {
-          id: `${source}/_other`,
-          label: t('groupOther'),
-          children: [],
-          skills: remainder
-        };
-      }
-
+      //#region source grouping (flat rows inside every source)
       function groupedSkills(skills, cwd, t) {
         const roots = skillRootsFor(skills, cwd);
         const bySource = new Map();
@@ -407,25 +339,18 @@
         const present = ['workspace', 'user', 'builtin'].filter((source) => bySource.has(source));
 
         return present.map((source) => {
-          const members = bySource.get(source);
-          const { children, remainder } = buildSegmentTree(members, 0, source);
-          const alts = altsFor(remainder, t, source);
+          const members = bySource.get(source).slice().sort((a, b) => a.name.localeCompare(b.name));
           const rootPath = roots.find((root) => SOURCE_OF_ROOT[root.id] === source)?.path;
           return {
             id: source,
             label: t('source' + source.charAt(0).toUpperCase() + source.slice(1)),
             path: rootPath,
-            children: alts === undefined ? children : [...children, alts],
-            skills: []
+            children: [],
+            skills: members
           };
         });
       }
-
-      function countSkills(node) {
-        return (
-          node.skills.length + node.children.reduce((sum, child) => sum + countSkills(child), 0)
-        );
-      }
+      //#endregion
 
       function filterSkills(skills, query) {
         const needle = query.trim().toLowerCase();
@@ -576,7 +501,7 @@
               h(
                 'div',
                 { className: 'skp_actions' },
-                props.canOpenResource && skill.path !== undefined
+                props.canOpenNative && skill.path !== undefined
                   ? h(
                       'button',
                       {
@@ -656,7 +581,6 @@
           openSkillFile,
           openSkillDir,
           revealSkillDir,
-          canOpenResource,
           canOpenNative
         } = props;
 
@@ -723,7 +647,7 @@
         }, [sessionId, cwd, reload]);
 
         const openFor = (skill) => () => {
-          openSkillFile(sessionId, cwd, skill.path);
+          openSkillFile(skill.path);
         };
 
         const openDirFor = (skill) => () => {
@@ -769,7 +693,6 @@
                 level,
                 t,
                 expanded: searching,
-                canOpenResource: Boolean(canOpenResource && skill.path),
                 canOpenNative: Boolean(canOpenNative && skill.path),
                 onOpen: openFor(skill),
                 onOpenDir: openDirFor(skill),
@@ -778,33 +701,9 @@
             )
           );
 
-        const renderNodes = (nodes, level) =>
-          nodes.map((node) => {
-            const id = node.id;
-            const open = isNodeExpanded(id);
-            return h(
-              'section',
-              { key: id, className: 'skp_group' },
-              h(GroupHead, {
-                level,
-                label: node.label,
-                count: countSkills(node),
-                collapsed: !open,
-                onToggle: () => toggleNode(id)
-              }),
-              open
-                ? [
-                    node.skills.length > 0 ? renderRows(node.skills, level + 1) : null,
-                    node.children.length > 0 ? renderNodes(node.children, level + 1) : null
-                  ]
-                : null
-            );
-          });
-
         const renderSections = () =>
           sections.map((section) => {
             const open = isNodeExpanded(section.id);
-            const totalCount = section.children.reduce((sum, child) => sum + countSkills(child), 0);
             return h(
               'section',
               { key: section.id, className: 'skp_group' },
@@ -813,11 +712,11 @@
                 label: section.label,
                 hint: section.hint === undefined ? undefined : t(section.id === 'builtin' ? 'builtinHint' : 'workspaceHint'),
                 path: section.path,
-                count: totalCount,
+                count: section.skills.length,
                 collapsed: !open,
                 onToggle: () => toggleNode(section.id)
               }),
-              open ? renderNodes(section.children, 2) : null
+              open ? renderRows(section.skills, 2) : null
             );
           });
 
@@ -954,7 +853,7 @@
         );
       }
 
-      const inject = ['slots', 'locale', 'remote', 'remote.skills', 'remote.session', 'sessions', 'sidebarRight'];
+      const inject = ['slots', 'locale', 'remote', 'remote.skills', 'remote.session', 'sessions'];
 
       function apply(ctx) {
         ctx.effect(() => {
@@ -974,8 +873,6 @@
         const t = ctx.locale.bind(NS);
         const skills = ctx.remote.skills;
         const sessionRemote = ctx.remote.session;
-        const sidebarRight = ctx.get('sidebarRight');
-        const canOpenResource = sidebarRight !== undefined && typeof sidebarRight.openResource === 'function';
         const canOpenNative = sessionRemote !== undefined && typeof sessionRemote.openWorkspacePath === 'function';
 
         const loadSkills = async (sessionId, signal) => {
@@ -987,10 +884,18 @@
           return result.value.skills;
         };
 
-        const openSkillFile = (sessionId, cwd, path) => {
-          if (!canOpenResource || path === undefined) return false;
+        /**
+         * Open one skill's SKILL.md in the OS default application.
+         *
+         * This panel is a global `main` surface: no Session is on screen while
+         * it is shown, so the right Sidebar cannot open a file from here at all.
+         * The default app is the only channel that always works, and it is the
+         * same remote path the directory buttons already use.
+         */
+        const openSkillFile = (skillPath) => {
+          if (!canOpenNative || skillPath === undefined) return false;
           try {
-            sidebarRight.openResource(fileAddressFor(sessionId, cwd, path));
+            sessionRemote.openWorkspacePath({ path: skillPath }).catch(() => {});
             return true;
           } catch {
             return false;
@@ -1016,7 +921,6 @@
           openSkillFile,
           openSkillDir,
           revealSkillDir,
-          canOpenResource,
           canOpenNative
         };
 
@@ -1055,8 +959,6 @@
           isBundledPath,
           rootOf,
           sourceOf,
-          buildSegmentTree,
-          segmentLabel,
           groupedSkills,
           filterSkills,
           fileAddressFor,

@@ -1,0 +1,6 @@
+# Session tags (lite) bundle: the Client half does all of the work, so the
+# Host row only has to resolve for the patch to apply. Nothing is written to
+# the Host; tags live in the browser's localStorage.
+- insert:
+    - id: session-tag-lite
+      name: '@local/session-tag-lite'

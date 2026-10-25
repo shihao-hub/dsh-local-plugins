@@ -1,5 +1,5 @@
-﻿/**
- * Render the namespace tree as text, so the grouping can be reviewed without a
+/**
+ * Render the flat list as text, so the grouping can be reviewed without a
  * browser. Uses the same pure helpers the panel does, loaded from ../client.js.
  *
  * Run: node design/preview-tree.mjs
@@ -42,28 +42,11 @@ skills.push({ name: 'dsh-badge', path: 'dsh-resource://asset/dsh-badge' });
 const sections = T.groupedSkills(skills, process.cwd(), t);
 
 let total = 0;
-const render = (nodes, depth) => {
-  for (const node of nodes) {
-    const pad = '  '.repeat(depth);
-    if (node.prefix === '') {
-      total += node.skills.length;
-      console.log(`${pad}▸ ${node.label} (${node.skills.length})   ← 兜底，永远显示`);
-      for (const skill of node.skills) console.log(`${pad}    • ${skill.name}`);
-      continue;
-    }
-    const size = T.countSkills(node);
-    total += node.skills.length;
-    console.log(`${pad}▾ ${node.label} (${size})`);
-    for (const skill of node.skills) console.log(`${pad}    • ${skill.name}`);
-    render(node.children, depth + 1);
-  }
-};
-
 for (const section of sections) {
-  const size = section.children.reduce((sum, child) => sum + T.countSkills(child), 0);
-  console.log(`\n■ ${section.label} — ${size} 项`);
-  render(section.children, 1);
+  total += section.skills.length;
+  console.log(`\n■ ${section.label} — ${section.skills.length} 项`);
+  for (const skill of section.skills) console.log(`    • ${skill.name}`);
 }
 
 console.log(`\n合计 ${total} / 输入 ${skills.length}`);
-console.log('默认行为：全部树形节点默认展开 (All expanded by default)');
+console.log('结构：来源分组 + 组内平铺（无命名空间树）');

@@ -41,27 +41,24 @@ const mod = factory((id) => (id === 'react' ? React : requireShim(id)));
 
 // 1. Verify plugin metadata & exports
 check('mod.inject includes remote.session', mod.inject.includes('remote.session'), true);
-check('mod.inject includes sidebarRight', mod.inject.includes('sidebarRight'), true);
+check(
+  'mod.inject no longer requires sidebarRight',
+  mod.inject.includes('sidebarRight'),
+  false
+);
 
 // 2. Mock ctx and verify apply registration & behavior
 let registeredPanelFace = null;
-let openedResourceUrl = null;
-let openedNativePath = null;
-let revealedNativePath = null;
-
-const fakeSidebarRight = {
-  openResource(url) {
-    openedResourceUrl = url;
-  }
-};
+let openedPath = null;
+let revealedPath = null;
 
 const fakeSessionRemote = {
   canOpenWorkspacePath: () => true,
   async openWorkspacePath(req) {
     if (req.action === 'reveal') {
-      revealedNativePath = req.path;
+      revealedPath = req.path;
     } else {
-      openedNativePath = req.path;
+      openedPath = req.path;
     }
     return { opened: true };
   }
@@ -90,8 +87,9 @@ const fakeCtx = {
     skills: fakeSkillsRemote,
     session: fakeSessionRemote
   },
-  get(key) {
-    if (key === 'sidebarRight') return fakeSidebarRight;
+  // The panel must not depend on the right Sidebar at all: a global main
+  // surface has no on-screen Session, so `sidebarRight` is irrelevant here.
+  get() {
     return undefined;
   },
   slots: {
@@ -107,30 +105,50 @@ const fakeCtx = {
 mod.apply(fakeCtx);
 
 check('plugin successfully registered and injected panelFace', registeredPanelFace !== null, true);
-check('canOpenResource is available', registeredPanelFace.canOpenResource, true);
 check('canOpenNative is available', registeredPanelFace.canOpenNative, true);
 
-// 3. Test openSkillFile protocol
-registeredPanelFace.openSkillFile('sess-123', 'C:/work/proj', 'C:/Users/29580/.agents/skills/sh-agy-boost/SKILL.md');
-check(
-  'openSkillFile passes standard dsh-resource protocol to sidebarRight',
-  openedResourceUrl,
-  'dsh-resource://file/session/sess-123/C:/Users/29580/.agents/skills/sh-agy-boost/SKILL.md'
-);
+// 3. openSkillFile always hands the file to the OS default application
+const skillPath = 'C:/Users/29580/.agents/skills/sh-agy-boost/SKILL.md';
+registeredPanelFace.openSkillFile(skillPath);
+check('openSkillFile opens SKILL.md with the default app', openedPath, skillPath);
 
-// 4. Test openSkillDir (opens directory in editor / default app)
+// 3b. missing path is ignored rather than opening a directory
+check('openSkillFile returns false for an undefined path', registeredPanelFace.openSkillFile(undefined), false);
+
+// 3c. without the remote channel nothing is opened
+const fakeCtxNoRemote = {
+  ...fakeCtx,
+  remote: {
+    skills: fakeSkillsRemote,
+    session: undefined
+  }
+};
+let noRemoteFace = null;
+mod.apply({
+  ...fakeCtxNoRemote,
+  slots: {
+    inject(slotName, fn) { fn(); },
+    register(meta) {
+      if (meta.name === 'main') noRemoteFace = meta.inject();
+    }
+  }
+});
+check('canOpenNative is false without the remote channel', noRemoteFace.canOpenNative, false);
+check('openSkillFile does not throw without the remote channel', noRemoteFace.openSkillFile(skillPath), false);
+
+// 4. openSkillDir (opens the skill directory itself)
 registeredPanelFace.openSkillDir('C:/Users/29580/.agents/skills/sh-agy-boost/SKILL.md');
 check(
   'openSkillDir opens skill directory without SKILL.md filename',
-  openedNativePath,
+  openedPath,
   'C:/Users/29580/.agents/skills/sh-agy-boost'
 );
 
-// 5. Test revealSkillDir (reveals directory in file manager)
+// 5. revealSkillDir (reveals the folder in the file manager)
 registeredPanelFace.revealSkillDir('C:/Users/29580/.agents/skills/sh-agy-boost/SKILL.md');
 check(
   'revealSkillDir reveals skill directory in explorer',
-  revealedNativePath,
+  revealedPath,
   'C:/Users/29580/.agents/skills/sh-agy-boost'
 );
 

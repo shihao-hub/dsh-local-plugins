@@ -1,4 +1,4 @@
-﻿import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,40 +86,20 @@ const rootsWhenCwdIsHome = T.skillRootsFor(
 check('roots: cwd as user home does not register project roots', rootsWhenCwdIsHome.some((r) => r.id === 'projectAgents'), false);
 check('source: global skill remains user even when cwd is home', T.sourceOf('C:/Users/29580/.agents/skills/a/SKILL.md', rootsWhenCwdIsHome), 'user');
 
-// 2. Segment tree recursive walk
-const fixture = [
-  'lark-doc',
-  'lark-sheets',
-  'zed-lsp-config',
-  'zed-lsp-install',
-  'solo-one',
-  'solo-two'
-];
-const tree = T.buildSegmentTree(fixture.map((name) => ({ name, path: 'x' })), 0, 'user');
-const collect = (nodes, acc) => {
-  for (const node of nodes) {
-    for (const skill of node.skills) acc.add(skill.name);
-    collect(node.children, acc);
-  }
-  return acc;
-};
-const inTree = collect(tree.children, new Set());
-for (const skill of tree.remainder) inTree.add(skill.name);
-check('tree: every name survives the walk', inTree.size, fixture.length);
-check(
-  'tree: a name whose segments end at the parent stays a leaf there',
-  tree.children.find((c) => c.id === 'user/lark').skills.map((s) => s.name).sort(),
-  ['lark-doc', 'lark-sheets']
+// 2. groupedSkills: one section per source, flat rows, name-sorted
+const grouped = T.groupedSkills(
+  [
+    { name: 'zeta', path: 'C:/Users/me/.agents/skills/zeta/SKILL.md' },
+    { name: 'alpha', path: 'C:/Users/me/.agents/skills/alpha/SKILL.md' },
+    { name: 'local', path: 'C:/work/proj/.agents/skills/local/SKILL.md' }
+  ],
+  'C:/work/proj',
+  t
 );
-check(
-  'tree: a shared deeper segment nests one level further',
-  tree.children.find((c) => c.id === 'user/zed').children.map((c) => c.id.split('/').pop() + ':' + c.skills.length),
-  ['lsp:2']
-);
-check('tree: two names sharing a segment do form a branch', tree.children.some((c) => c.id === 'user/solo'), true);
-check('label: an unknown abbreviation is title-cased', T.segmentLabel('wibble'), 'Wibble');
-check('label: a known abbreviation expands', T.segmentLabel('agy'), 'Antigravity');
-check('label: Zed abbreviation expands', T.segmentLabel('zed'), 'Zed');
+check('grouped: a section per source', grouped.map((s) => s.id), ['workspace', 'user']);
+check('grouped: no nested children remain', grouped.every((s) => s.children.length === 0), true);
+check('grouped: user rows are name-sorted', grouped[1].skills.map((s) => s.name), ['alpha', 'zeta']);
+check('grouped: workspace row stays in its own section', grouped[0].skills.map((s) => s.name), ['local']);
 
 // 3. filterSkills
 const sample = [
@@ -209,37 +189,17 @@ if (realNames.length > 0) {
   check('live: the user section leads', sections[0].id, 'user');
   check('live: the bundled section follows', sections[1].id, 'builtin');
 
-  const walked = [];
-  const walk = (nodes) => {
-    for (const node of nodes) {
-      for (const skill of node.skills) walked.push(skill.name);
-      walk(node.children);
-    }
-  };
-  for (const section of sections) {
-    for (const child of section.children) {
-      for (const skill of child.skills) walked.push(skill.name);
-      walk(child.children);
-    }
-  }
+  const walked = sections.flatMap((section) => section.skills.map((skill) => skill.name));
   check('live: every skill is accounted for', walked.length, all.length);
   check('live: no skill appears twice', new Set(walked).size, all.length);
   check('live: no skill is missing', all.filter((s) => !walked.includes(s.name)).length, 0);
 
-  const inBuiltin = [];
-  const gather = (nodes) => {
-    for (const node of nodes) {
-      for (const skill of node.skills) inBuiltin.push(skill.name);
-      gather(node.children);
-    }
-  };
-  for (const child of sections[1].children) {
-    for (const skill of child.skills) inBuiltin.push(skill.name);
-    gather(child.children);
-  }
   check(
     'live: the office skills are classified as builtin',
-    inBuiltin.filter((name) => name.startsWith('office-')).sort(),
+    sections[1].skills
+      .filter((skill) => skill.name.startsWith('office-'))
+      .map((skill) => skill.name)
+      .sort(),
     ['office-docx', 'office-pptx', 'office-xlsx']
   );
 }

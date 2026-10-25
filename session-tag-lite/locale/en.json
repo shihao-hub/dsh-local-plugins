@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session Tags (Lite)",
+    "description": "Tag Sessions with a fixed todo / archive pair, free-form tags and a shared tag pool, plus a due date, then browse Sessions by tag in an overlay panel. The left sidebar is left untouched and the data stays in this browser."
+  }
+}

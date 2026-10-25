@@ -1,0 +1,27 @@
+{
+  "name": "@local/sidebar-footer-row",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Keeps the sidebar footer on one row: Remote entry on the left, app restart/quit controls on the right. Pure CSS override of ds-harness-remote's forced column layout.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

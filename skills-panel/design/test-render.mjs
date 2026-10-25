@@ -1,7 +1,7 @@
 /**
  * Render the panel's element tree in Node, with a stateful React mock, and
- * report what each branch header says versus what is actually rendered under
- * it. Tests the multi-level segment tree and all-expanded TreeView interactions.
+ * assert the flat layout: one collapsible section per source, one row per
+ * skill, no nested namespace branches.
  *
  * Run: node design/test-render.mjs
  */
@@ -119,73 +119,81 @@ function harness(skills) {
     return (node.children ?? []).map(text).join('');
   };
 
-  return { render, tree: () => tree, all, text, store, Panel };
+  const heads = () => all(tree, 'button').filter((b) => b.props.className?.includes('skp_groupHead'));
+
+  return { render, tree: () => tree, all, text, store, Panel, heads };
 }
 
-const names = [
-  'lark-doc', 'lark-sheets', 'lark-im', 'lark-base',
-  'lark-workflow-summary', 'lark-workflow-standup',
-  'sh-agy-boost', 'sh-agy-goal', 'sh-agy-plan',
-  'sh-zed-lsp-config', 'sh-zed-lsp-install',
-  'redis-core', 'redis-search', 'redis-security',
-  'code-review', 'tdd', 'research'
-];
+const names = ['lark-doc', 'lark-sheets', 'sh-agy-boost', 'code-review', 'tdd', 'research'];
 const skills = names.map((name) => ({ name, description: 'd', path: `C:/Users/me/.agents/skills/${name}/SKILL.md` }));
 
-// --- 1. Default state: ALL branches open -------------------------------------
+// --- 1. Default state: flat rows under a single source section ---------------
 let h = harness(skills);
 h.render();
-let buttons = h.all(h.tree(), 'button').filter((b) => b.props.className?.includes('skp_groupHead'));
-const expanded = buttons.filter((b) => b.props['aria-expanded'] === 'true');
-check('default: all branch headers read as expanded', expanded.length, buttons.length);
+check('default: exactly one source section', h.heads().length, 1);
+check('default: that section is expanded', h.heads()[0].props['aria-expanded'], 'true');
 check('default: every skill row is rendered', names.every((n) => h.text(h.tree()).includes(n)), true);
+check(
+  'default: no nested namespace sections (only one skp_group)',
+  h.all(h.tree(), 'section').filter((s) => s.props.className === 'skp_group').length,
+  1
+);
+check(
+  'default: rows live in a single flat list',
+  h.all(h.tree(), 'ul').filter((u) => u.props.className === 'skp_list').length,
+  1
+);
+check(
+  'default: rows are rendered in name order',
+  h.all(h.tree(), 'summary').map((s) => h.text(s.children[0])),
+  ['code-review', 'lark-doc', 'lark-sheets', 'research', 'sh-agy-boost', 'tdd']
+);
 
-// --- 2. Clicking a branch collapses it independently -------------------------
-const lark = buttons.find((b) => h.text(b).startsWith('Lark'));
-lark.props.onClick();
-buttons = h.all(h.tree(), 'button').filter((b) => b.props.className?.includes('skp_groupHead'));
-const larkAfter = buttons.find((b) => h.text(b).startsWith('Lark'));
-check('click branch: Lark is collapsed', larkAfter.props['aria-expanded'], 'false');
-check('click branch: Lark rows are hidden', h.text(h.tree()).includes('lark-doc'), false);
-check('click branch: Sh branches remain expanded', h.text(h.tree()).includes('sh-agy-boost'), true);
-check('click branch: Redis branches remain expanded', h.text(h.tree()).includes('redis-core'), true);
+// --- 2. Clicking the source header collapses it ------------------------------
+h.heads()[0].props.onClick();
+check('click: source section is collapsed', h.heads()[0].props['aria-expanded'], 'false');
+check('click: its rows are hidden', names.some((n) => h.text(h.tree()).includes(n)), false);
 
-// --- 3. Clicking the branch again re-expands it -----------------------------
-larkAfter.props.onClick();
-buttons = h.all(h.tree(), 'button').filter((b) => b.props.className?.includes('skp_groupHead'));
-const larkReopened = buttons.find((b) => h.text(b).startsWith('Lark'));
-check('click again: Lark is re-expanded', larkReopened.props['aria-expanded'], 'true');
-check('click again: Lark rows are visible again', h.text(h.tree()).includes('lark-doc'), true);
+// --- 3. Clicking again re-expands it ----------------------------------------
+h.heads()[0].props.onClick();
+check('click again: source section is expanded', h.heads()[0].props['aria-expanded'], 'true');
+check('click again: rows are visible again', h.text(h.tree()).includes('lark-doc'), true);
 
-// --- 4. Sub-branch collapsing (Lark -> Workflow) -----------------------------
-const wf = buttons.find((b) => h.text(b).startsWith('Workflow'));
-check('sub-branch: Workflow is found', wf !== undefined, true);
-wf.props.onClick();
-buttons = h.all(h.tree(), 'button').filter((b) => b.props.className?.includes('skp_groupHead'));
-const wfAfter = buttons.find((b) => h.text(b).startsWith('Workflow'));
-check('sub-branch: Workflow is collapsed', wfAfter.props['aria-expanded'], 'false');
-check('sub-branch: Lark parent remains expanded', buttons.find((b) => h.text(b).startsWith('Lark')).props['aria-expanded'], 'true');
-check('sub-branch: Lark direct leaves still visible', h.text(h.tree()).includes('lark-doc'), true);
-check('sub-branch: Workflow children are hidden', h.text(h.tree()).includes('lark-workflow-summary'), false);
-
-// --- 5. Multiple sources (User + Builtin) ------------------------------------
+// --- 4. User + builtin sections are independent ------------------------------
 h = harness([
   ...skills,
   { name: 'office-docx', description: 'd', path: 'D:/app/resources/runtime/office-skills/office-docx/SKILL.md' },
   { name: 'office-pptx', description: 'd', path: 'D:/app/resources/runtime/office-skills/office-pptx/SKILL.md' }
 ]);
 h.render();
-const heads = () => h.all(h.tree(), 'button').filter((b) => b.props.className?.includes('skp_groupHead'));
-const sourceUser = heads().find((b) => h.text(b).startsWith('sourceUser'));
-const sourceBuiltin = heads().find((b) => h.text(b).startsWith('sourceBuiltin'));
-check('sources: user section rendered and expanded', sourceUser?.props['aria-expanded'], 'true');
-check('sources: builtin section rendered and expanded', sourceBuiltin?.props['aria-expanded'], 'true');
+check('sources: user and builtin sections both rendered', h.heads().length, 2);
+check('sources: user section leads and is expanded', h.heads()[0].props['aria-expanded'], 'true');
+check('sources: builtin section follows and is expanded', h.heads()[1].props['aria-expanded'], 'true');
 
-// Collapse builtin section
-sourceBuiltin.props.onClick();
-const builtinAfter = heads().find((b) => h.text(b).startsWith('sourceBuiltin'));
-check('sources: builtin collapsed', builtinAfter?.props['aria-expanded'], 'false');
-check('sources: user remains expanded', heads().find((b) => h.text(b).startsWith('sourceUser'))?.props['aria-expanded'], 'true');
+h.heads()[1].props.onClick();
+check('sources: builtin collapsed', h.heads()[1].props['aria-expanded'], 'false');
+check('sources: builtin rows hidden', h.text(h.tree()).includes('office-docx'), false);
+check('sources: user rows remain', h.text(h.tree()).includes('lark-doc'), true);
+check('sources: user section still expanded', h.heads()[0].props['aria-expanded'], 'true');
+
+// --- 5. Workspace section appears only in the "all" view ---------------------
+h = harness([
+  { name: 'ws-local', description: 'd', path: 'C:/work/proj/.agents/skills/ws-local/SKILL.md' },
+  ...skills
+]);
+h.render();
+check('workspace: default view hides workspace-only skills', h.heads().length, 1);
+
+const viewBtn = h.all(h.tree(), 'button').find((b) => String(b.props.className).includes('skp_viewBtn'));
+check('workspace: the view switch is present', viewBtn !== undefined, true);
+viewBtn.props.onClick();
+check('workspace: switching to all reveals the workspace section', h.heads().length, 2);
+check('workspace: workspace section leads', h.text(h.heads()[0]).includes('sourceWorkspace'), true);
+check(
+  'workspace: its flat row is present',
+  h.all(h.tree(), 'summary').some((s) => h.text(s.children[0]) === 'ws-local'),
+  true
+);
 
 if (failures > 0) {
   console.log(`\n${failures} check(s) failed.`);

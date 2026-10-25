@@ -1,0 +1,3 @@
+- insert:
+    - id: session-tags
+      name: '@local/session-tags'

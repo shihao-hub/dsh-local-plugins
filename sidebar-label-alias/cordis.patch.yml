@@ -1,0 +1,3 @@
+- insert:
+    - id: sidebar-label-alias
+      name: '@local/sidebar-label-alias'
