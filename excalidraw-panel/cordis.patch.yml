@@ -1,0 +1,3 @@
+- insert:
+    - id: excalidraw-panel
+      name: '@local/excalidraw-panel'

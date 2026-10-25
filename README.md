@@ -13,6 +13,7 @@
 | :--- | :--- | :--- |
 | [`rider-theme`](./rider-theme) | `@local/rider-theme` | JetBrains Rider Dark 调色板与外观配置插件，支持在通用设置中一键切换。 |
 | [`skills-panel`](./skills-panel) | `@local/skills-panel` | 左侧边栏 Skills 技能面板，展示当前会话挂载可用的 Agent 技能。 |
+| [`excalidraw-panel`](./excalidraw-panel) | `@local/excalidraw-panel` | 左侧边栏「画板」入口：在主区以 `<iframe>` 嵌入 [excalidraw.cn](https://excalidraw.cn/) 手绘白板（官方 Excalidraw 中文镜像，无 `X-Frame-Options`/`frame-ancestors`，可安全内嵌）。顶栏提供刷新与「浏览器打开」；画作由 Excalidraw 自身 localStorage 自动保存，刷新面板、切换会话或重启应用都不丢。零依赖、无宿主路由、无构建步骤；自测 `self-test.mjs`（`node:vm` 里跑 `client.js`，校验 slot 注册、站点常量、字典与关键 CSS）。 |
 | [`mod-renamer`](./mod-renamer) | `@local/mod-renamer` | 将 Harness 界面所有「Plugins / 插件」文案替换为「模组 (mods)」。 |
 | [`app-restart`](./app-restart) | `@local/app-restart` | 底部状态栏/快捷菜单一键平滑重启 Harness 桌面应用插件。 |
 | [`window-memory`](./window-memory) | `@local/window-memory` | 记住桌面主窗口大小与位置，下次启动自动恢复（实时去抖持久化到 `%LOCALAPPDATA%\dsh-window-memory`）。helper 为原生小程序（`helper.cs` 由 `csc` 首次运行编译缓存，`/target:winexe` 不分配控制台），常驻成本 19.7MB/≈0% CPU，取代原先 106MB/4.05% CPU 的常驻 PowerShell；回归测试 `test/self-test.mjs`（纯逻辑）+ [`test/window-test.mjs`](./window-memory/test/window-test.mjs)（真窗口 6 场景 27 项，夹具自建窗口、不依赖系统应用）。 |
