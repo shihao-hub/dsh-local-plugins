@@ -1,0 +1,6 @@
+# Session title edit: the Client half owns all the behaviour, so the Host row
+# only has to resolve for the profile patch to apply. Nothing is written to the
+# Host; the rename goes through the host's own `session.rename` contract.
+- insert:
+    - id: session-title-edit
+      name: '@local/session-title-edit'

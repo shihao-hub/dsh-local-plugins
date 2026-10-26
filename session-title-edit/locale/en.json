@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "In-place session title edit",
+    "description": "Rename the current Session directly from the conversation header title: double-click it (or use the pencil button), Enter saves and Esc cancels. Uses the host's own session.rename contract; never takes over the header, never depends on other plugins."
+  }
+}
