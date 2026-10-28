@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Fork selected turns",
+    "description": "Pick any completed turns of the current session and fork a new session that inherits exactly those turns as native history, including tool calls and results."
+  }
+}

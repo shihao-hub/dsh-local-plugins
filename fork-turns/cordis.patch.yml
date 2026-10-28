@@ -1,0 +1,5 @@
+# Fork-turns bundle: the Host half owns the same-origin routes that build the
+# seed and create the child Session; the Client half owns the picker.
+- insert:
+    - id: fork-turns
+      name: '@local/fork-turns'
