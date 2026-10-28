@@ -66,12 +66,20 @@ function loadPlugin(storage, logger) {
 }
 
 const sessionsFixture = {
-  ids: ['s1', 's2', 's3', 'blank1', 'gone'],
+  ids: ['s1', 's2', 's3', 'blank1', 'sub1', 'gone'],
   byId: {
     s1: { id: 's1', displayTitle: 'Alpha', updatedAt: 100, running: false, blank: false },
     s2: { id: 's2', displayTitle: 'Beta 会议', updatedAt: 300, running: true, blank: false },
     s3: { id: 's3', displayTitle: 'Gamma', updatedAt: 200, running: false, blank: false },
-    blank1: { id: 'blank1', displayTitle: 'New Session', updatedAt: 50, running: false, blank: true }
+    blank1: { id: 'blank1', displayTitle: 'New Session', updatedAt: 50, running: false, blank: true },
+    sub1: {
+      id: 'sub1',
+      displayTitle: '子代理任务',
+      updatedAt: 400,
+      running: false,
+      blank: false,
+      origin: 'subagent'
+    }
   },
   phase: 'ready',
   projectionsBySession: {}
@@ -96,7 +104,8 @@ test('空输入只给出保留名', () => {
     marks: {},
     due: {},
     collapsed: {},
-    colors: {}
+    colors: {},
+    options: { recentHours: 24 }
   });
   assert.deepEqual(t.normalizeData('x').tags, ['待办', '归档']);
 });
@@ -361,6 +370,46 @@ test('非法日期返回 null', () => {
   assert.equal(t.formatDue(''), null);
 });
 
+console.log('relativeTime');
+
+test('分桶：刚刚 / 分钟 / 小时 / 天 / 月 / 年', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const at = (ms) => now - ms;
+  assert.deepEqual(t.relativeTime(at(5000), now), { unit: 'now', n: 0 });
+  assert.deepEqual(t.relativeTime(at(5 * 60 * 1000), now), { unit: 'minutes', n: 5 });
+  assert.deepEqual(t.relativeTime(at(3 * 3600 * 1000), now), { unit: 'hours', n: 3 });
+  assert.deepEqual(t.relativeTime(at(8 * 24 * 3600 * 1000), now), { unit: 'days', n: 8 });
+  assert.deepEqual(t.relativeTime(at(45 * 24 * 3600 * 1000), now), { unit: 'months', n: 1 });
+  assert.deepEqual(t.relativeTime(at(400 * 24 * 3600 * 1000), now), { unit: 'years', n: 1 });
+});
+
+test('分桶边界：差一毫秒与整点', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const now = 1_800_000_000_000;
+  const at = (ms) => now - ms;
+  assert.equal(t.relativeTime(at(59_999), now).unit, 'now');
+  assert.deepEqual(t.relativeTime(at(60_000), now), { unit: 'minutes', n: 1 });
+  assert.deepEqual(t.relativeTime(at(3_599_999), now), { unit: 'minutes', n: 59 });
+  assert.deepEqual(t.relativeTime(at(3_600_000), now), { unit: 'hours', n: 1 });
+  assert.deepEqual(t.relativeTime(at(86_399_999), now), { unit: 'hours', n: 23 });
+  assert.deepEqual(t.relativeTime(at(86_400_000), now), { unit: 'days', n: 1 });
+  assert.deepEqual(t.relativeTime(at(30 * 86_400_000), now), { unit: 'months', n: 1 });
+  assert.deepEqual(t.relativeTime(at(365 * 86_400_000), now), { unit: 'years', n: 1 });
+});
+
+test('relativeLabel 文案与缺失时间戳', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const now = Date.now();
+  const at = (ms) => now - ms;
+  assert.equal(t.relativeLabel(at(5000), now), '刚刚');
+  assert.equal(t.relativeLabel(at(5 * 60 * 1000), now), '5分钟');
+  assert.equal(t.relativeLabel(at(3 * 3600 * 1000), now), '3小时');
+  assert.equal(t.relativeLabel(at(8 * 24 * 3600 * 1000), now), '8天');
+  assert.equal(t.relativeLabel(0, now), '');
+  assert.equal(t.relativeLabel(-5, now), '');
+});
+
 console.log('buildPanelModel');
 
 test('快照未就绪时返回 null', () => {
@@ -369,10 +418,10 @@ test('快照未就绪时返回 null', () => {
   assert.equal(t.buildPanelModel(tagState, { ids: [], byId: null }, ''), null);
 });
 
-test('跳过空白会话与快照里缺失的 id', () => {
+test('跳过空白会话、子代理会话与快照里缺失的 id', () => {
   const { test: t } = loadPlugin(memoryStorage());
   const model = t.buildPanelModel(tagState, sessionsFixture, '');
-  assert.equal(model.total, 3, 'blank1 与 gone 被跳过');
+  assert.equal(model.total, 3, 'blank1 / sub1 / gone 被跳过');
   for (const group of model.groups) {
     for (const row of group.rows) {
       assert.ok(row.id === 's1' || row.id === 's2' || row.id === 's3');
@@ -383,8 +432,11 @@ test('跳过空白会话与快照里缺失的 id', () => {
 test('待办 / 归档 / 自定义标签 / 未打标分组', () => {
   const { test: t } = loadPlugin(memoryStorage());
   const model = t.buildPanelModel(tagState, sessionsFixture, '');
-  const names = model.groups.map((group) => group.name);
-  assert.deepEqual(names, ['待办', '归档', '读书']);
+  assert.deepEqual(
+    model.groups.map((group) => group.key),
+    [t.RECENT_KEY, '待办', '归档', '读书'],
+    's2 处于运行中，因此也进了「最近」分区'
+  );
   const reading = model.groups.find((group) => group.name === '读书');
   assert.deepEqual(reading.rows.map((row) => row.id), ['s2', 's3'], '组内按 updatedAt 倒序');
 });
@@ -395,10 +447,10 @@ test('无标签会话落入「未打标」组，保留组头始终在', () => {
   const model = t.buildPanelModel(state, sessionsFixture, '');
   assert.deepEqual(
     model.groups.map((group) => group.key),
-    ['待办', '归档', t.UNTAGGED_KEY]
+    [t.RECENT_KEY, '待办', '归档', t.UNTAGGED_KEY]
   );
-  assert.equal(model.groups[1].rows.length, 0, '归档空组仍保留组头，分类骨架稳定');
-  assert.equal(model.groups[2].rows.length, 3);
+  assert.equal(model.groups[2].rows.length, 0, '归档空组仍保留组头，分类骨架稳定');
+  assert.equal(model.groups[3].rows.length, 3);
 });
 
 test('搜索态不保留空组', () => {
@@ -406,7 +458,7 @@ test('搜索态不保留空组', () => {
   const model = t.buildPanelModel(tagState, sessionsFixture, '会议');
   assert.deepEqual(
     model.groups.map((group) => group.key),
-    ['读书']
+    [t.RECENT_KEY, '读书']
   );
 });
 
@@ -420,9 +472,9 @@ test('搜索命中标签名', () => {
 test('搜索命中会话标题', () => {
   const { test: t } = loadPlugin(memoryStorage());
   const model = t.buildPanelModel(tagState, sessionsFixture, '会议');
-  assert.equal(model.groups.length, 1);
-  assert.equal(model.groups[0].name, '读书');
-  assert.deepEqual(model.groups[0].rows.map((row) => row.id), ['s2']);
+  const reading = model.groups.find((group) => group.name === '读书');
+  assert.ok(reading !== undefined, '读书组仍在');
+  assert.deepEqual(reading.rows.map((row) => row.id), ['s2']);
 });
 
 test('搜索无命中时没有任何分组', () => {
@@ -438,6 +490,144 @@ test('面板行带出截止日期与运行态', () => {
   const row = reading.rows.find((item) => item.id === 's2');
   assert.equal(row.due, '2020-01-01');
   assert.equal(row.running, true);
+});
+
+console.log('recent（最近 N 小时）');
+
+const recentNow = Date.now();
+const recentSessionsFixture = {
+  ids: ['r1', 'r2', 'r3', 'rblank'],
+  byId: {
+    r1: {
+      id: 'r1',
+      displayTitle: '刚刚聊过',
+      updatedAt: recentNow - 30 * 60 * 1000,
+      running: false,
+      blank: false
+    },
+    r2: {
+      id: 'r2',
+      displayTitle: '三十小时前',
+      updatedAt: recentNow - 30 * 3600 * 1000,
+      running: false,
+      blank: false
+    },
+    r3: {
+      id: 'r3',
+      displayTitle: '很旧但运行中',
+      updatedAt: recentNow - 100 * 3600 * 1000,
+      running: true,
+      blank: false
+    },
+    rblank: {
+      id: 'rblank',
+      displayTitle: 'Blank',
+      updatedAt: recentNow,
+      running: false,
+      blank: true
+    }
+  },
+  phase: 'ready',
+  projectionsBySession: {}
+};
+
+const staleSessionsFixture = {
+  ids: ['old1'],
+  byId: {
+    old1: {
+      id: 'old1',
+      displayTitle: 'Old',
+      updatedAt: recentNow - 100 * 3600 * 1000,
+      running: false,
+      blank: false
+    }
+  },
+  phase: 'ready',
+  projectionsBySession: {}
+};
+
+const recentState = (hours) => ({
+  tags: ['待办', '归档'],
+  marks: {},
+  due: {},
+  collapsed: {},
+  colors: {},
+  options: { recentHours: hours }
+});
+
+test('「最近」分区置顶：按窗口过滤，运行中的会话纳入', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const model = t.buildPanelModel(recentState(24), recentSessionsFixture, '');
+  assert.equal(model.groups[0].key, t.RECENT_KEY);
+  assert.equal(model.groups[0].name, '最近 24 小时');
+  assert.equal(model.groups[0].icon, 'clock');
+  assert.deepEqual(
+    model.groups[0].rows.map((row) => row.id),
+    ['r1', 'r3'],
+    '30 小时前的 r2 被排除；r3 虽旧但 running，保留'
+  );
+});
+
+test('窗口放大后更早的会话进入「最近」', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const model = t.buildPanelModel(recentState(48), recentSessionsFixture, '');
+  assert.deepEqual(model.groups[0].rows.map((row) => row.id), ['r1', 'r2', 'r3']);
+});
+
+test('窗口内没有会话时不出现「最近」分区', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const model = t.buildPanelModel(recentState(24), staleSessionsFixture, '');
+  assert.equal(
+    model.groups.some((group) => group.key === t.RECENT_KEY),
+    false
+  );
+  assert.deepEqual(
+    model.groups.map((group) => group.key),
+    ['待办', '归档', t.UNTAGGED_KEY]
+  );
+});
+
+test('选项规范化：合法值保留，脏值回落 24', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  assert.equal(t.normalizeData({ options: { recentHours: 48 } }).options.recentHours, 48);
+  assert.equal(t.normalizeData({ options: { recentHours: 1 } }).options.recentHours, 1);
+  assert.equal(t.normalizeData({ options: { recentHours: 720 } }).options.recentHours, 720);
+  for (const dirty of [0, 721, -5, '48', NaN, null, undefined, Infinity]) {
+    assert.equal(
+      t.normalizeData({ options: { recentHours: dirty } }).options.recentHours,
+      24,
+      String(dirty)
+    );
+  }
+  assert.equal(t.normalizeData({}).options.recentHours, 24);
+});
+
+test('recentHoursOf：缺省 24，读取持久值，越界回落', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  assert.equal(t.recentHoursOf({}), 24);
+  assert.equal(t.recentHoursOf({ options: { recentHours: 72 } }), 72);
+  assert.equal(t.recentHoursOf({ options: { recentHours: 999 } }), 24);
+});
+
+test('setRecentHours 落盘；越界与非数字不产生提交', () => {
+  const storage = memoryStorage();
+  const { test: t } = loadPlugin(storage);
+  t.setRecentHours(48);
+  assert.equal(t.getData().options.recentHours, 48);
+  assert.equal(JSON.parse(storage.read('session-tag-lite.v1')).options.recentHours, 48);
+  const before = t.getSnapshot();
+  t.setRecentHours(0);
+  t.setRecentHours(721);
+  t.setRecentHours('abc');
+  assert.equal(t.getSnapshot(), before);
+});
+
+test('hoursLabel：整天用「天」，其余用「小时」', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  assert.equal(t.hoursLabel(6), '6 小时');
+  assert.equal(t.hoursLabel(24), '24 小时');
+  assert.equal(t.hoursLabel(48), '2 天');
+  assert.equal(t.hoursLabel(168), '7 天');
 });
 
 console.log('store');

@@ -44,6 +44,13 @@
       /** 「未打标」折叠后先露出的行数；超出时由「显示全部」按钮展开。 */
       const UNTAGGED_PREVIEW = 15;
 
+      /** 「最近 N 小时」：时间维度的置顶分区，不是标签。 */
+      const RECENT_KEY = '__recent__';
+      const DEFAULT_RECENT_HOURS = 24;
+      const RECENT_MIN_HOURS = 1;
+      const RECENT_MAX_HOURS = 720;
+      const RECENT_PRESETS = [6, 12, 24, 48, 72, 168];
+
       /** 语义色与哈希色环（typeai 同款调色板）。 */
       const TODO_COLOR = '#d9a441';
       const ARCHIVE_COLOR = '#9a9ca0';
@@ -80,6 +87,23 @@
         'panel.close': '关闭',
         'panel.running': '运行中',
         'panel.untagged': UNTAGGED,
+        'panel.recent': '最近 {hours} 小时',
+        'panel.hoursBtn': '最近 {hours}',
+        'panel.hoursHint': '调整「最近」窗口',
+        'panel.hoursUnit': '{n} 小时',
+        'panel.hoursDays': '{n} 天',
+        'panel.hoursCustom': '自定义（{min}–{max} 小时）',
+        'panel.hoursUnitHint': '单位：小时，范围 {min}–{max}',
+        'panel.hoursApply': '确定',
+        'panel.rowTag': '打标签',
+        'panel.quickTitle': '给「{title}」打标签',
+        'panel.quickPlaceholder': '新建标签，回车添加',
+        'time.now': '刚刚',
+        'time.minutes': '{n}分钟',
+        'time.hours': '{n}小时',
+        'time.days': '{n}天',
+        'time.months': '{n}个月',
+        'time.years': '{n}年',
         'due.format': '{date} 截止',
         'relative.year': '{year}-{month}-{day}'
       };
@@ -114,6 +138,23 @@
         'panel.close': 'Close',
         'panel.running': 'Running',
         'panel.untagged': 'Untagged',
+        'panel.recent': 'Last {hours} hours',
+        'panel.hoursBtn': 'Last {hours}',
+        'panel.hoursHint': 'Adjust the “recent” window',
+        'panel.hoursUnit': '{n} h',
+        'panel.hoursDays': '{n} d',
+        'panel.hoursCustom': 'Custom ({min}–{max} hours)',
+        'panel.hoursUnitHint': 'Unit: hours, {min}–{max}',
+        'panel.hoursApply': 'Apply',
+        'panel.rowTag': 'Tag this Session',
+        'panel.quickTitle': 'Tag “{title}”',
+        'panel.quickPlaceholder': 'New tag, press Enter',
+        'time.now': 'now',
+        'time.minutes': '{n}min',
+        'time.hours': '{n}h',
+        'time.days': '{n}d',
+        'time.months': '{n}mo',
+        'time.years': '{n}y',
         'due.format': 'Due {date}',
         'relative.year': '{year}-{month}-{day}'
       };
@@ -200,12 +241,48 @@
         return { text: fill(T('due.format'), { date: dateText }), overdue: dueKey < today };
       }
 
+      /**
+       * 相对时间分桶：与宿主 ui-workspace 行上的 `relativeTime` 同构——
+       * 刚刚 / N分钟 / N小时 / N天 / N个月 / N年。
+       */
+      function relativeTime(updatedAt, now) {
+        const stamp = Number(updatedAt) || 0;
+        const current = Number(now) || Date.now();
+        if (stamp <= 0) return { unit: 'none', n: 0 };
+        const diff = Math.max(0, current - stamp);
+        const minute = 60 * 1000;
+        const hour = 60 * minute;
+        const day = 24 * hour;
+        if (diff < minute) return { unit: 'now', n: 0 };
+        if (diff < hour) return { unit: 'minutes', n: Math.floor(diff / minute) };
+        if (diff < day) return { unit: 'hours', n: Math.floor(diff / hour) };
+        if (diff < 30 * day) return { unit: 'days', n: Math.floor(diff / day) };
+        if (diff < 365 * day) return { unit: 'months', n: Math.floor(diff / (30 * day)) };
+        return { unit: 'years', n: Math.floor(diff / (365 * day)) };
+      }
+
+      /** 面板行尾的时间文案；时间戳缺失时给空串（不渲染）。 */
+      function relativeLabel(updatedAt, now) {
+        const info = relativeTime(updatedAt, now);
+        if (info.unit === 'none') return '';
+        if (info.unit === 'now') return T('time.now');
+        return fill(T('time.' + info.unit), { n: String(info.n) });
+      }
+
       /* ------------------------------------------------------------------ *
        * 存储：不可变快照 + 订阅者（localStorage 为唯一持久层）
        * ------------------------------------------------------------------ */
 
       function emptyData() {
-        return { version: 1, tags: [], marks: {}, due: {}, collapsed: {}, colors: {} };
+        return {
+          version: 1,
+          tags: [],
+          marks: {},
+          due: {},
+          collapsed: {},
+          colors: {},
+          options: { recentHours: DEFAULT_RECENT_HOURS }
+        };
       }
 
       function normalizeName(value) {
@@ -268,6 +345,18 @@
           }
         }
         out.collapsed = collapsed;
+
+        const options = { recentHours: DEFAULT_RECENT_HOURS };
+        if (raw.options !== null && typeof raw.options === 'object') {
+          const hours = raw.options.recentHours;
+          if (typeof hours === 'number' && Number.isFinite(hours)) {
+            const rounded = Math.round(hours);
+            if (rounded >= RECENT_MIN_HOURS && rounded <= RECENT_MAX_HOURS) {
+              options.recentHours = rounded;
+            }
+          }
+        }
+        out.options = options;
 
         const colors = {};
         if (raw.colors !== null && typeof raw.colors === 'object') {
@@ -460,6 +549,39 @@
         return key === UNTAGGED_KEY;
       }
 
+      /** 「最近」窗口的小时数：缺省 24，脏值回落默认。 */
+      function recentHoursOf(state) {
+        const value =
+          state === null || state === undefined || state.options === undefined
+            ? undefined
+            : state.options.recentHours;
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          const rounded = Math.round(value);
+          if (rounded >= RECENT_MIN_HOURS && rounded <= RECENT_MAX_HOURS) return rounded;
+        }
+        return DEFAULT_RECENT_HOURS;
+      }
+
+      /** 调整「最近 N 小时」窗口；越界或非数字一律忽略。 */
+      function setRecentHours(value) {
+        const hours = Math.round(Number(value));
+        if (!Number.isFinite(hours) || hours < RECENT_MIN_HOURS || hours > RECENT_MAX_HOURS) return;
+        if (hours === recentHoursOf(data)) return;
+        commitData(
+          Object.assign({}, data, {
+            options: Object.assign({}, data.options, { recentHours: hours })
+          })
+        );
+      }
+
+      /** 小时数的人话标签：≥2 整天用「N 天」，其余用「N 小时」。 */
+      function hoursLabel(hours) {
+        if (hours >= 48 && hours % 24 === 0) {
+          return fill(T('panel.hoursDays'), { n: String(hours / 24) });
+        }
+        return fill(T('panel.hoursUnit'), { n: String(hours) });
+      }
+
       /* ---------------------------- 写 ---------------------------- */
 
       function writeMarks(sessionId, names) {
@@ -626,6 +748,9 @@
           const summary = sessionList.byId[id];
           if (summary === undefined || summary === null) continue;
           if (summary.blank === true) continue;
+          /* 子代理会话不上架：宿主左栏的 sessionVisible 同样按 origin 过滤，
+             这里镜像同一规则，否则标签面板会列出一堆只属于某个父会话的子智能体。 */
+          if (summary.origin === 'subagent') continue;
           seen.add(id);
           const title =
             typeof summary.displayTitle === 'string' && summary.displayTitle !== ''
@@ -712,6 +837,28 @@
           });
         }
 
+        /* 「最近 N 小时」置顶分区：时间维度，不是标签；窗口内（或运行中）的
+           会话按最近活动倒序。它自己会随时间收敛，不会像「未打标」那样无限长。 */
+        const hours = recentHoursOf(state);
+        const windowStart = Date.now() - hours * 3600 * 1000;
+        const recentRows = sortRows(
+          filter(function (row) {
+            return row.running || row.updatedAt >= windowStart;
+          })
+        );
+        if (recentRows.length > 0) {
+          groups.unshift({
+            key: RECENT_KEY,
+            name: fill(T('panel.recent'), { hours: String(hours) }),
+            color: '',
+            icon: 'clock',
+            rows: recentRows,
+            reserved: false,
+            untagged: false,
+            recent: true
+          });
+        }
+
         /* 浏览态保留「待办 / 归档」两个组头（即使为空），让分类骨架稳定；
            搜索态只保留有命中的组，避免一堆 0 计数干扰。 */
         return {
@@ -749,6 +896,29 @@
             strokeLinejoin: 'round'
           }),
           h('circle', { cx: 8.2, cy: 8.2, r: 1.5, fill: 'currentColor' })
+        );
+      }
+
+      /** 时钟图标：「最近 N 小时」分区的组头标记（不是标签色点）。 */
+      function ClockIcon(props) {
+        const size = typeof props.size === 'number' && props.size > 0 ? props.size : 12;
+        return h(
+          'svg',
+          {
+            viewBox: '0 0 24 24',
+            width: size,
+            height: size,
+            fill: 'none',
+            'aria-hidden': 'true',
+            style: { display: 'block' }
+          },
+          h('circle', { cx: 12, cy: 12, r: 8.5, stroke: 'currentColor', strokeWidth: 1.7 }),
+          h('path', {
+            d: 'M12 7.5v5l3 1.8',
+            stroke: 'currentColor',
+            strokeWidth: 1.7,
+            strokeLinecap: 'round'
+          })
         );
       }
 
@@ -1193,6 +1363,10 @@
         const sessionList = useSessions();
         const [query, setQuery] = React.useState('');
         const [showAllUntagged, setShowAllUntagged] = React.useState(false);
+        const [quickId, setQuickId] = React.useState(null);
+        const [quickDraft, setQuickDraft] = React.useState('');
+        const [hoursOpen, setHoursOpen] = React.useState(false);
+        const [hoursDraft, setHoursDraft] = React.useState('');
         const wasOpen = React.useRef(false);
 
         React.useEffect(
@@ -1201,6 +1375,10 @@
               wasOpen.current = true;
               setQuery(app.ui.panelQuery === null ? '' : app.ui.panelQuery);
               setShowAllUntagged(false);
+              setQuickId(null);
+              setQuickDraft('');
+              setHoursOpen(false);
+              setHoursDraft(String(recentHoursOf(app.data)));
             } else if (!app.ui.panel && wasOpen.current) {
               wasOpen.current = false;
             }
@@ -1212,7 +1390,16 @@
           function () {
             if (!app.ui.panel) return undefined;
             const onKey = function (event) {
-              if (event.key === 'Escape') closePanel();
+              if (event.key !== 'Escape') return;
+              if (quickId !== null) {
+                setQuickId(null);
+                return;
+              }
+              if (hoursOpen) {
+                setHoursOpen(false);
+                return;
+              }
+              closePanel();
             };
             if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
               window.addEventListener('keydown', onKey);
@@ -1222,12 +1409,13 @@
             }
             return undefined;
           },
-          [app.ui.panel]
+          [app.ui.panel, quickId, hoursOpen]
         );
 
         if (!app.ui.panel) return null;
 
         const model = buildPanelModel(app.data, sessionList, query);
+        const nowMs = Date.now();
 
         const renderGroup = function (group) {
           const searching = query.trim() !== '';
@@ -1250,9 +1438,11 @@
                 }
               },
               h('span', { className: 'stl_gchev' }, collapsed ? '▸' : '▾'),
-              group.color === ''
-                ? h('span', { className: 'stl_gdot stl_gdotEmpty' })
-                : h('span', { className: 'stl_gdot', style: { background: group.color } }),
+              group.icon === 'clock'
+                ? h('span', { className: 'stl_gclock' }, h(ClockIcon, { size: 12 }))
+                : group.color === ''
+                  ? h('span', { className: 'stl_gdot stl_gdotEmpty' })
+                  : h('span', { className: 'stl_gdot', style: { background: group.color } }),
               h('span', { className: 'stl_gname' }, group.name),
               h('span', { className: 'stl_gcount' }, String(group.rows.length))
             ),
@@ -1263,42 +1453,141 @@
                   { className: 'stl_grows' },
                   visible.map(function (row) {
                     const dueInfo = row.due === '' ? null : formatDue(row.due);
+                    const quick = quickId === row.id;
                     return h(
-                      'button',
-                      {
-                        key: row.id,
-                        type: 'button',
-                        className: 'stl_srow',
-                        onClick: function () {
-                          openSession(row.id);
-                        }
-                      },
-                      h('span', { className: 'stl_stitle', title: row.title }, row.title),
-                      row.tags
-                        .filter(function (name) {
-                          return name !== group.name;
-                        })
-                        .slice(0, 2)
-                        .map(function (name) {
-                          return h(
-                            'span',
-                            { key: name, className: 'stl_sbadge' },
-                            h('span', {
-                              className: 'stl_sbadgeDot',
-                              style: { background: colorOf(app.data, name) }
-                            }),
-                            name
-                          );
-                        }),
-                      dueInfo === null
-                        ? null
-                        : h(
-                            'span',
-                            { className: 'stl_sdue' + (dueInfo.overdue ? ' stl_sdueLate' : '') },
-                            dueInfo.text
-                          ),
-                      row.running
-                        ? h('span', { className: 'stl_run', title: T('panel.running') })
+                      'div',
+                      { key: row.id, className: 'stl_srowWrap' },
+                      h(
+                        'div',
+                        {
+                          className: 'stl_srow',
+                          role: 'button',
+                          tabIndex: 0,
+                          title: row.title,
+                          onClick: function () {
+                            openSession(row.id);
+                          },
+                          onKeyDown: function (event) {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              openSession(row.id);
+                            }
+                          }
+                        },
+                        h('span', { className: 'stl_stitle', title: row.title }, row.title),
+                        row.tags
+                          .filter(function (name) {
+                            return name !== group.name;
+                          })
+                          .slice(0, 2)
+                          .map(function (name) {
+                            return h(
+                              'span',
+                              { key: name, className: 'stl_sbadge' },
+                              h('span', {
+                                className: 'stl_sbadgeDot',
+                                style: { background: colorOf(app.data, name) }
+                              }),
+                              name
+                            );
+                          }),
+                        dueInfo === null
+                          ? null
+                          : h(
+                              'span',
+                              { className: 'stl_sdue' + (dueInfo.overdue ? ' stl_sdueLate' : '') },
+                              dueInfo.text
+                            ),
+                        row.running
+                          ? h('span', { className: 'stl_run', title: T('panel.running') })
+                          : null,
+                        row.updatedAt > 0
+                          ? h(
+                              'span',
+                              {
+                                className: 'stl_stime',
+                                title: new Date(row.updatedAt).toLocaleString()
+                              },
+                              relativeLabel(row.updatedAt, nowMs)
+                            )
+                          : null,
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'stl_rowAct',
+                            title: T('panel.rowTag'),
+                            'aria-label': T('panel.rowTag'),
+                            'aria-expanded': quick,
+                            onClick: function (event) {
+                              event.stopPropagation();
+                              setQuickId(quick ? null : row.id);
+                              setQuickDraft('');
+                            }
+                          },
+                          quick ? '−' : '+'
+                        )
+                      ),
+                      quick
+                        ? h(
+                            'div',
+                            { className: 'stl_quick' },
+                            h(
+                              'div',
+                              { className: 'stl_quickHead' },
+                              fill(T('panel.quickTitle'), { title: row.title })
+                            ),
+                            h(
+                              'div',
+                              { className: 'stl_quickPool' },
+                              orderedPool(app.data).map(function (name) {
+                                const active = row.tags.indexOf(name) >= 0;
+                                const color = colorOf(app.data, name);
+                                return h(
+                                  'button',
+                                  {
+                                    key: name,
+                                    type: 'button',
+                                    className: 'stl_quickChip' + (active ? ' stl_quickChipActive' : ''),
+                                    style: {
+                                      color: color,
+                                      borderColor:
+                                        'color-mix(in srgb, ' +
+                                        color +
+                                        ' ' +
+                                        (active ? '55' : '25') +
+                                        '%, transparent)'
+                                    },
+                                    title: active
+                                      ? fill(T('editor.removeTag'), { name: name })
+                                      : fill(T('editor.addTag'), { name: name }),
+                                    onClick: function () {
+                                      toggleSessionTag(row.id, name);
+                                    }
+                                  },
+                                  h('span', { className: 'stl_quickDot', style: { background: color } }),
+                                  (active ? '✓ ' : '+ ') + name
+                                );
+                              })
+                            ),
+                            h('input', {
+                              className: 'stl_input stl_quickInput',
+                              value: quickDraft,
+                              autoFocus: true,
+                              placeholder: T('panel.quickPlaceholder'),
+                              'aria-label': T('panel.quickPlaceholder'),
+                              onChange: function (event) {
+                                setQuickDraft(event.target.value);
+                              },
+                              onKeyDown: function (event) {
+                                if (event.key !== 'Enter') return;
+                                event.preventDefault();
+                                const parts = quickDraft.trim().split(/[,，]/);
+                                for (const part of parts) addSessionTag(row.id, part);
+                                setQuickDraft('');
+                              }
+                            })
+                          )
                         : null
                     );
                   }),
@@ -1359,6 +1648,94 @@
                 'div',
                 { className: 'stl_dtitles' },
                 h('div', { className: 'stl_dtitle', title: T('panel.guide') }, T('panel.heading'))
+              ),
+              h(
+                'div',
+                { className: 'stl_hoursWrap' },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'stl_hours',
+                    title: T('panel.hoursHint'),
+                    'aria-haspopup': 'menu',
+                    'aria-expanded': hoursOpen,
+                    onClick: function () {
+                      setHoursOpen(!hoursOpen);
+                      setHoursDraft(String(recentHoursOf(app.data)));
+                    }
+                  },
+                  fill(T('panel.hoursBtn'), { hours: String(recentHoursOf(app.data)) }) + ' ▾'
+                ),
+                hoursOpen
+                  ? h(
+                      'div',
+                      { className: 'stl_hoursMenu', role: 'menu' },
+                      RECENT_PRESETS.map(function (preset) {
+                        const active = recentHoursOf(app.data) === preset;
+                        return h(
+                          'button',
+                          {
+                            key: preset,
+                            type: 'button',
+                            role: 'menuitemradio',
+                            'aria-checked': active,
+                            className: 'stl_hoursItem' + (active ? ' stl_hoursItemActive' : ''),
+                            onClick: function () {
+                              setRecentHours(preset);
+                              setHoursOpen(false);
+                            }
+                          },
+                          hoursLabel(preset)
+                        );
+                      }),
+                      h('div', { className: 'stl_hoursSep' }),
+                      h(
+                        'div',
+                        { className: 'stl_hoursCustom' },
+                        h('input', {
+                          className: 'stl_input',
+                          type: 'number',
+                          min: RECENT_MIN_HOURS,
+                          max: RECENT_MAX_HOURS,
+                          value: hoursDraft,
+                          'aria-label': fill(T('panel.hoursCustom'), {
+                            min: String(RECENT_MIN_HOURS),
+                            max: String(RECENT_MAX_HOURS)
+                          }),
+                          onChange: function (event) {
+                            setHoursDraft(event.target.value);
+                          },
+                          onKeyDown: function (event) {
+                            if (event.key !== 'Enter') return;
+                            event.preventDefault();
+                            setRecentHours(hoursDraft);
+                            setHoursOpen(false);
+                          }
+                        }),
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'stl_hoursApply',
+                            onClick: function () {
+                              setRecentHours(hoursDraft);
+                              setHoursOpen(false);
+                            }
+                          },
+                          T('panel.hoursApply')
+                        )
+                      ),
+                      h(
+                        'div',
+                        { className: 'stl_hoursTip' },
+                        fill(T('panel.hoursUnitHint'), {
+                          min: String(RECENT_MIN_HOURS),
+                          max: String(RECENT_MAX_HOURS)
+                        })
+                      )
+                    )
+                  : null
               ),
               h(
                 'button',
@@ -1463,13 +1840,26 @@
 
         '.stl_backdrop{position:fixed;inset:0;z-index:1000;display:flex;align-items:flex-start;justify-content:center;padding:10vh 16px 16px;background:rgba(0,0,0,.42);pointer-events:auto}',
         '.stl_dialog{display:flex;flex-direction:column;width:min(500px,94vw);max-height:74vh;background:var(--dsw-alias-bg-overlay);border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;box-shadow:0 16px 40px rgba(0,0,0,.38);color:var(--dsw-alias-label-primary);font-size:var(--dsh-title-font-size,13px);overflow:hidden}',
-        '.stl_dialogWide{width:min(620px,94vw)}',
+        '.stl_dialogWide{width:min(760px,94vw);max-height:82vh}',
         '.stl_dhead{display:flex;align-items:flex-start;gap:10px;padding:12px 14px 10px;border-bottom:.5px solid var(--dsw-alias-border-l1);flex:none}',
         '.stl_dtitles{flex:1;min-width:0}',
-        '.stl_dtitle{font-weight:600}',
+        '.stl_dtitle{font-weight:600;font-size:14px}',
         '.stl_dsub{color:var(--dsw-alias-label-tertiary);font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.stl_icon{border:0;background:0 0;color:var(--dsw-alias-label-tertiary);font-size:16px;line-height:1;cursor:pointer;padding:2px 6px;border-radius:4px;flex:none}',
         '.stl_icon:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
+        '.stl_hoursWrap{position:relative;flex:none}',
+        '.stl_hours{border:.5px solid var(--dsw-alias-border-l1);background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;padding:3px 9px;border-radius:9px;cursor:pointer;white-space:nowrap}',
+        '.stl_hours:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+        '.stl_hoursMenu{position:absolute;right:0;top:calc(100% + 6px);z-index:6;display:flex;flex-direction:column;min-width:170px;padding:4px;background:var(--dsw-alias-bg-overlay);border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;box-shadow:0 10px 26px rgba(0,0,0,.34)}',
+        '.stl_hoursItem{border:0;background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;text-align:left;padding:5px 8px;border-radius:5px;cursor:pointer}',
+        '.stl_hoursItem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+        '.stl_hoursItemActive{color:var(--dsw-alias-brand-primary);font-weight:600}',
+        '.stl_hoursSep{height:1px;margin:4px 2px;background:var(--dsw-alias-border-l1)}',
+        '.stl_hoursCustom{display:flex;align-items:center;gap:4px;padding:3px 4px 1px}',
+        '.stl_hoursCustom .stl_input{width:64px;padding:3px 6px;font-size:11px}',
+        '.stl_hoursApply{border:.5px solid var(--dsw-alias-border-l1);background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;padding:3px 8px;border-radius:5px;cursor:pointer}',
+        '.stl_hoursApply:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+        '.stl_hoursTip{font-size:10px;color:var(--dsw-alias-label-tertiary);padding:2px 6px 4px}',
         '.stl_dbody{flex:1;overflow:auto;padding:10px 14px 12px}',
         '.stl_psearch{padding:10px 14px 0;flex:none}',
         '.stl_dfoot{display:flex;align-items:center;justify-content:flex-end;gap:6px;padding:8px 12px;border-top:.5px solid var(--dsw-alias-border-l1);flex:none;flex-wrap:wrap}',
@@ -1488,7 +1878,7 @@
         '.stl_pillX{border:0;background:0 0;color:inherit;cursor:pointer;font-size:12px;line-height:1;padding:0 1px;opacity:.75}',
         '.stl_pillX:hover{opacity:1}',
         '.stl_hint{font-size:11px;color:var(--dsw-alias-label-tertiary)}',
-        '.stl_input{border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:5px 8px;border-radius:var(--dsw-radius-sm,5px);min-width:0;width:100%;box-sizing:border-box;outline:none}',
+        '.stl_input{border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;padding:6px 9px;border-radius:var(--dsw-radius-sm,5px);min-width:0;width:100%;box-sizing:border-box;outline:none}',
         '.stl_input:focus{border-color:var(--dsw-alias-brand-primary)}',
         '.stl_pool{display:flex;flex-wrap:wrap;gap:5px}',
         '.stl_poolChip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:9px;border:1px solid transparent;background:0 0;font:inherit;font-size:11px;line-height:17px;cursor:pointer}',
@@ -1502,24 +1892,40 @@
         '.stl_primary{border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;font-weight:600;padding:5px 14px;border-radius:var(--dsw-radius-sm,5px);cursor:pointer}',
         '.stl_primary:hover{background:var(--dsw-alias-interactive-bg-hover)}',
 
-        '.stl_empty{padding:22px 10px;text-align:center;color:var(--dsw-alias-label-tertiary);font-size:11px}',
+        '.stl_empty{padding:24px 10px;text-align:center;color:var(--dsw-alias-label-tertiary);font-size:12px}',
         '.stl_group{margin-bottom:2px}',
-        '.stl_ghead{display:flex;align-items:center;gap:6px;width:100%;height:30px;padding:0 8px;margin-bottom:2px;border:0;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;font-weight:600;cursor:pointer;border-radius:5px;text-align:left}',
+        '.stl_ghead{display:flex;align-items:center;gap:7px;width:100%;height:32px;padding:0 9px;margin-bottom:2px;border:0;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;font-weight:600;cursor:pointer;border-radius:5px;text-align:left}',
         '.stl_ghead:hover{background:var(--dsw-alias-interactive-bg-hover)}',
         '.stl_gchev{width:12px;flex:none;color:var(--dsw-alias-label-tertiary);font-size:10px}',
         '.stl_gdot{width:7px;height:7px;border-radius:50%;flex:none}',
         '.stl_gdotEmpty{border:.5px solid var(--dsw-alias-label-tertiary)}',
+        '.stl_gclock{display:inline-flex;align-items:center;justify-content:center;width:12px;flex:none;color:var(--dsw-alias-label-tertiary)}',
         '.stl_gname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-        '.stl_gcount{flex:none;font-size:10px;line-height:15px;padding:0 6px;border-radius:8px;border:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-weight:400;font-variant-numeric:tabular-nums}',
+        '.stl_gcount{flex:none;font-size:11px;line-height:16px;padding:0 6px;border-radius:8px;border:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-weight:400;font-variant-numeric:tabular-nums}',
         '.stl_grows{display:flex;flex-direction:column;margin-left:13px;padding-left:9px;padding-bottom:2px;margin-bottom:2px;border-left:1px solid var(--dsw-alias-border-l1)}',
-        '.stl_srow{display:flex;align-items:center;gap:6px;width:100%;height:26px;padding:0 6px;border:0;background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer;border-radius:5px;text-align:left}',
+        '.stl_srow{position:relative;display:flex;align-items:center;gap:6px;width:100%;height:30px;padding:0 8px;border:0;background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;cursor:pointer;border-radius:5px;text-align:left}',
         '.stl_srow:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-        '.stl_more{display:block;width:100%;height:24px;padding:0 6px;border:0;background:0 0;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11px;text-align:left;cursor:pointer;border-radius:5px}',
+        '.stl_srow:focus-visible{outline:1px solid var(--dsw-alias-border-l2);outline-offset:-1px}',
+        '.stl_srowWrap{display:flex;flex-direction:column}',
+        '.stl_rowAct{position:absolute;right:6px;top:50%;transform:translateY(-50%);opacity:0;width:20px;height:20px;border:0;border-radius:4px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary);font:inherit;font-size:15px;line-height:1;cursor:pointer;padding:0;z-index:1}',
+        '.stl_srowWrap:hover .stl_rowAct,.stl_srowWrap:focus-within .stl_rowAct,.stl_rowAct:focus-visible{opacity:1}',
+        '.stl_rowAct:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+        '.stl_quick{display:flex;flex-direction:column;gap:6px;padding:6px 7px 8px;margin:2px 0 5px;border-radius:6px;background:var(--dsw-alias-bg-layer-1);border:.5px solid var(--dsw-alias-border-l1)}',
+        '.stl_quickHead{font-size:11px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+        '.stl_quickPool{display:flex;flex-wrap:wrap;gap:4px}',
+        '.stl_quickChip{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:9px;border:1px solid transparent;background:0 0;font:inherit;font-size:11px;line-height:17px;cursor:pointer}',
+        '.stl_quickChip:hover{border-color:var(--dsw-alias-border-l2)}',
+        '.stl_quickChipActive{font-weight:600;background:var(--dsw-alias-interactive-bg-hover)}',
+        '.stl_quickDot{width:5px;height:5px;border-radius:50%;flex:none}',
+        '.stl_quickInput{padding:3px 7px;font-size:11px}',
+        '.stl_more{display:block;width:100%;height:26px;padding:0 8px;border:0;background:0 0;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;text-align:left;cursor:pointer;border-radius:5px}',
         '.stl_more:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
         '.stl_stitle{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-        '.stl_sbadge{display:inline-flex;align-items:center;gap:3px;padding:0 5px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);border:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:15px;flex:none}',
+        '.stl_sbadge{display:inline-flex;align-items:center;gap:3px;padding:0 5px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);border:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;flex:none}',
         '.stl_sbadgeDot{width:5px;height:5px;border-radius:50%;flex:none}',
-        '.stl_sdue{font-size:10px;color:var(--dsw-alias-label-tertiary);flex:none}',
+        '.stl_sdue{font-size:11px;color:var(--dsw-alias-label-tertiary);flex:none}',
+        '.stl_stime{margin-left:auto;flex:none;padding-left:6px;font-size:12px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap}',
+        '.stl_srowWrap:hover .stl_stime{opacity:0}',
         '.stl_sdueLate{color:var(--dsw-alias-state-error-primary)}',
         '.stl_run{width:7px;height:7px;border-radius:50%;border:1.5px solid var(--dsw-alias-state-success-primary);border-top-color:transparent;flex:none;animation:stl_spin 1s linear infinite}',
         '@keyframes stl_spin{to{transform:rotate(360deg)}}'
@@ -1654,15 +2060,25 @@
           HASH_COLORS: HASH_COLORS,
           UNTAGGED_KEY: UNTAGGED_KEY,
           UNTAGGED_PREVIEW: UNTAGGED_PREVIEW,
+          RECENT_KEY: RECENT_KEY,
+          RECENT_PRESETS: RECENT_PRESETS,
+          DEFAULT_RECENT_HOURS: DEFAULT_RECENT_HOURS,
+          RECENT_MIN_HOURS: RECENT_MIN_HOURS,
+          RECENT_MAX_HOURS: RECENT_MAX_HOURS,
           normalizeData: normalizeData,
           loadData: loadData,
           colorOf: colorOf,
           formatDue: formatDue,
+          relativeTime: relativeTime,
+          relativeLabel: relativeLabel,
           fill: fill,
           tagsOf: tagsOf,
           dueOf: dueOf,
           orderedPool: orderedPool,
           isCollapsed: isCollapsed,
+          recentHoursOf: recentHoursOf,
+          setRecentHours: setRecentHours,
+          hoursLabel: hoursLabel,
           pickAutoColor: pickAutoColor,
           setTagColor: setTagColor,
           addSessionTag: addSessionTag,
