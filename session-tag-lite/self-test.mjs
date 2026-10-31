@@ -105,7 +105,7 @@ test('空输入只给出保留名', () => {
     due: {},
     collapsed: {},
     colors: {},
-    options: { recentHours: 24 }
+    options: { recentHours: 24, rowAction: true, panelView: 'tree' }
   });
   assert.deepEqual(t.normalizeData('x').tags, ['待办', '归档']);
 });
@@ -492,6 +492,61 @@ test('面板行带出截止日期与运行态', () => {
   assert.equal(row.running, true);
 });
 
+console.log('归档过滤');
+
+test('宿主已归档的会话不进面板（不在最近、也不在标签组）', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const model = t.buildPanelModel(tagState, sessionsFixture, '', new Set(['s3']));
+  assert.equal(model.total, 2, 's3 被归档过滤掉');
+  for (const group of model.groups) {
+    assert.equal(
+      group.rows.some((row) => row.id === 's3'),
+      false,
+      group.key + ' 里不应出现已归档会话'
+    );
+  }
+  const reading = model.groups.find((group) => group.name === '读书');
+  assert.deepEqual(reading.rows.map((row) => row.id), ['s2'], '读书组只剩 s2');
+});
+
+test('归档过滤不改变未归档会话的分组与计数', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const before = t.buildPanelModel(tagState, sessionsFixture, '');
+  const after = t.buildPanelModel(tagState, sessionsFixture, '', new Set(['s3']));
+  const normalize = (model) =>
+    model.groups.map((group) => ({
+      key: group.key,
+      ids: group.rows
+        .map((row) => row.id)
+        .filter((id) => id !== 's3')
+    }));
+  assert.deepEqual(normalize(after), normalize(before));
+  assert.equal(
+    after.groups.find((group) => group.key === '归档').rows.length,
+    0,
+    '归档组骨架仍在，但内容被清空'
+  );
+});
+
+test('archivedIdsOf 兼容各种快照形状', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  assert.equal(t.archivedIdsOf(null).size, 0);
+  assert.equal(t.archivedIdsOf(undefined).size, 0);
+  assert.equal(t.archivedIdsOf({}).size, 0);
+  assert.equal(t.archivedIdsOf({ archivedSessionIds: 'nope' }).size, 0);
+  assert.deepEqual([...t.archivedIdsOf({ archivedSessionIds: ['a', 'b'] })], ['a', 'b']);
+});
+
+console.log('菜单文案');
+
+test('「…」菜单项是动词短语且不带省略号', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const label = t.menuLabel();
+  assert.equal(label, '编辑标签');
+  assert.equal(label.indexOf('…'), -1, '不再使用省略号');
+  assert.notEqual(label, '标签', '不是孤零零的「标签」两个字');
+});
+
 console.log('recent（最近 N 小时）');
 
 const recentNow = Date.now();
@@ -628,6 +683,121 @@ test('hoursLabel：整天用「天」，其余用「小时」', () => {
   assert.equal(t.hoursLabel(24), '24 小时');
   assert.equal(t.hoursLabel(48), '2 天');
   assert.equal(t.hoursLabel(168), '7 天');
+});
+
+console.log('面板视图（树形 / 标签页）');
+
+test('panelView 缺省树形；合法值保留、脏值回落', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  assert.equal(t.normalizeData(null).options.panelView, 'tree');
+  assert.equal(t.normalizeData({}).options.panelView, 'tree');
+  assert.equal(t.normalizeData({ options: { panelView: 'tree' } }).options.panelView, 'tree');
+  assert.equal(t.normalizeData({ options: { panelView: 'tabs' } }).options.panelView, 'tabs');
+  for (const dirty of ['grid', 'Tabs', '', 1, null, undefined, {}, []]) {
+    assert.equal(
+      t.normalizeData({ options: { panelView: dirty } }).options.panelView,
+      'tree',
+      String(dirty)
+    );
+  }
+});
+
+test('panelViewOf：缺省树形，读取持久值，脏值回落', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  assert.equal(t.panelViewOf(null), 'tree');
+  assert.equal(t.panelViewOf(undefined), 'tree');
+  assert.equal(t.panelViewOf({}), 'tree');
+  assert.equal(t.panelViewOf({ options: {} }), 'tree');
+  assert.equal(t.panelViewOf({ options: { panelView: 'tabs' } }), 'tabs');
+  assert.equal(t.panelViewOf({ options: { panelView: 'tree' } }), 'tree');
+  assert.equal(t.panelViewOf({ options: { panelView: 'nope' } }), 'tree');
+});
+
+test('setPanelView 落盘、幂等、不覆盖其他选项', () => {
+  const storage = memoryStorage();
+  const { test: t } = loadPlugin(storage);
+  t.setRecentHours(48);
+  t.setRowAction(false);
+  let notified = 0;
+  const off = t.subscribe(function () {
+    notified += 1;
+  });
+
+  t.setPanelView('tabs');
+  assert.equal(t.panelViewOf(t.getData()), 'tabs');
+  assert.equal(notified, 1);
+  const saved = JSON.parse(storage.read(t.STORAGE_KEY));
+  assert.equal(saved.options.panelView, 'tabs');
+  assert.equal(saved.options.recentHours, 48, '视图切换不覆盖「最近」窗口');
+  assert.equal(saved.options.rowAction, false, '视图切换不覆盖行尾开关');
+
+  t.setPanelView('tabs');
+  assert.equal(notified, 1, '同值不产生提交');
+
+  t.setPanelView('bogus');
+  assert.equal(t.panelViewOf(t.getData()), 'tree', '非法值归一为默认树形');
+  assert.equal(notified, 2);
+
+  t.setPanelView('tree');
+  assert.equal(notified, 2, '归一后同值不产生提交');
+  off();
+});
+
+test('视图偏好随远端恢复一起读入且不丢标签', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const restored = t.normalizeData({
+    options: { recentHours: 24, panelView: 'tabs' },
+    marks: { s1: ['待办'] }
+  });
+  assert.equal(t.panelViewOf(restored), 'tabs');
+  assert.deepEqual(restored.marks.s1, ['待办'], '规范化不丢标签数据');
+});
+
+console.log('行尾标签按钮开关');
+
+test('缺省显示；只有显式 false 才隐藏', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  assert.equal(t.rowActionVisible(t.normalizeData(null)), true);
+  assert.equal(t.rowActionVisible(t.normalizeData({ options: {} })), true);
+  assert.equal(t.rowActionVisible(t.normalizeData({ options: { rowAction: false } })), false);
+  assert.equal(t.rowActionVisible(t.normalizeData({ options: { rowAction: true } })), true);
+  assert.equal(t.rowActionVisible(t.normalizeData({ options: { rowAction: 'no' } })), true, '脏值回落显示');
+  assert.equal(t.rowActionVisible(null), true);
+  assert.equal(t.rowActionVisible(undefined), true);
+  assert.equal(t.rowActionVisible({}), true);
+});
+
+test('setRowAction 落盘、幂等、不碰 recentHours', () => {
+  const storage = memoryStorage();
+  const { test: t } = loadPlugin(storage);
+  t.setRecentHours(48);
+  let notified = 0;
+  const off = t.subscribe(function () {
+    notified += 1;
+  });
+
+  t.setRowAction(false);
+  assert.equal(t.rowActionVisible(t.getData()), false);
+  assert.equal(notified, 1);
+  const saved = JSON.parse(storage.read(t.STORAGE_KEY));
+  assert.equal(saved.options.rowAction, false);
+  assert.equal(saved.options.recentHours, 48, '开关不覆盖「最近」窗口');
+
+  t.setRowAction(false);
+  assert.equal(notified, 1, '同值不产生提交');
+
+  t.setRowAction(true);
+  assert.equal(t.rowActionVisible(t.getData()), true);
+  assert.equal(notified, 2);
+  assert.equal(JSON.parse(storage.read(t.STORAGE_KEY)).options.rowAction, true);
+  off();
+});
+
+test('开关状态随远端恢复一起读入', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const restored = t.normalizeData({ options: { recentHours: 24, rowAction: false }, marks: { s1: ['待办'] } });
+  assert.equal(t.rowActionVisible(restored), false);
+  assert.deepEqual(restored.marks.s1, ['待办'], '规范化不丢标签数据');
 });
 
 console.log('store');

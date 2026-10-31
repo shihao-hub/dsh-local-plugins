@@ -30,6 +30,11 @@
       const STORAGE_KEY = 'session-tag-lite.v1';
       const REMOTE_URL = '/plugins/session-tag-lite/state';
       const CSS_ID = 'session-tag-lite-styles';
+      const PLUGIN_PACKAGE = '@local/session-tag-lite';
+      /** 通用设置行的注册 id（与 `tools/verify-settings-badges.mjs` 的契约定名）。 */
+      const ROW_ID = 'session-tag-lite';
+      /** 通用设置里的座位顺序：排在 pin-highlight(13) / active-session(14) 之后。 */
+      const SETTINGS_ORDER = 15;
 
       /** 固定语义标签：始终排在池首，不参与「未使用自动清理」。 */
       const TODO = '待办';
@@ -43,6 +48,9 @@
       const MAX_DISK_SLICES = 6;
       /** 「未打标」折叠后先露出的行数；超出时由「显示全部」按钮展开。 */
       const UNTAGGED_PREVIEW = 15;
+
+      /** 面板视图：树形（默认）或标签页。只记忆这一项，不记忆当前 tab。 */
+      const DEFAULT_PANEL_VIEW = 'tree';
 
       /** 「最近 N 小时」：时间维度的置顶分区，不是标签。 */
       const RECENT_KEY = '__recent__';
@@ -58,7 +66,7 @@
 
       /** 面板 / 弹窗的一次性提示文案键。 */
       const zh = {
-        'menu.label': '标签…',
+        'menu.label': '编辑标签',
         'action.title': '标签',
         'hover.edit': '编辑标签',
         'editor.title': '会话标签',
@@ -85,6 +93,10 @@
         'panel.emptyIdle': '还没有打过标签的会话；在会话行上点标签按钮开始',
         'panel.showAll': '显示全部 {n} 个',
         'panel.close': '关闭',
+        'panel.viewGroup': '面板视图',
+        'panel.viewTree': '树形',
+        'panel.viewTabs': '标签页',
+        'panel.emptyGroup': '这个标签下还没有会话',
         'panel.running': '运行中',
         'panel.untagged': UNTAGGED,
         'panel.recent': '最近 {hours} 小时',
@@ -105,11 +117,17 @@
         'time.months': '{n}个月',
         'time.years': '{n}年',
         'due.format': '{date} 截止',
-        'relative.year': '{year}-{month}-{day}'
+        'relative.year': '{year}-{month}-{day}',
+        'row.title': '会话行尾标签按钮',
+        'row.badge': '模组',
+        'row.badgeTitle': '由插件 {package} 提供',
+        'row.desc': '关闭后会话行尾不再出现色盘；仍可用「… → 编辑标签」打标签',
+        'row.enable': '显示行尾标签按钮',
+        'row.disable': '隐藏行尾标签按钮'
       };
 
       const en = {
-        'menu.label': 'Tags…',
+        'menu.label': 'Edit tags',
         'action.title': 'Tags',
         'hover.edit': 'Edit tags',
         'editor.title': 'Session tags',
@@ -136,6 +154,10 @@
         'panel.emptyIdle': 'No tagged Sessions yet — use the tag button on a Session row',
         'panel.showAll': 'Show all {n}',
         'panel.close': 'Close',
+        'panel.viewGroup': 'Panel view',
+        'panel.viewTree': 'Tree',
+        'panel.viewTabs': 'Tabs',
+        'panel.emptyGroup': 'No Sessions under this tab',
         'panel.running': 'Running',
         'panel.untagged': 'Untagged',
         'panel.recent': 'Last {hours} hours',
@@ -156,7 +178,13 @@
         'time.months': '{n}mo',
         'time.years': '{n}y',
         'due.format': 'Due {date}',
-        'relative.year': '{year}-{month}-{day}'
+        'relative.year': '{year}-{month}-{day}',
+        'row.title': 'Tag button on Session rows',
+        'row.badge': 'Plugin',
+        'row.badgeTitle': 'Provided by plugin {package}',
+        'row.desc': 'Hides the swatch at the end of each Session row; you can still tag through “…” → Edit tags',
+        'row.enable': 'Show the tag button',
+        'row.disable': 'Hide the tag button'
       };
 
       /* ------------------------------------------------------------------ *
@@ -281,7 +309,7 @@
           due: {},
           collapsed: {},
           colors: {},
-          options: { recentHours: DEFAULT_RECENT_HOURS }
+          options: { recentHours: DEFAULT_RECENT_HOURS, rowAction: true, panelView: DEFAULT_PANEL_VIEW }
         };
       }
 
@@ -346,7 +374,7 @@
         }
         out.collapsed = collapsed;
 
-        const options = { recentHours: DEFAULT_RECENT_HOURS };
+        const options = { recentHours: DEFAULT_RECENT_HOURS, rowAction: true, panelView: DEFAULT_PANEL_VIEW };
         if (raw.options !== null && typeof raw.options === 'object') {
           const hours = raw.options.recentHours;
           if (typeof hours === 'number' && Number.isFinite(hours)) {
@@ -354,6 +382,10 @@
             if (rounded >= RECENT_MIN_HOURS && rounded <= RECENT_MAX_HOURS) {
               options.recentHours = rounded;
             }
+          }
+          if (typeof raw.options.rowAction === 'boolean') options.rowAction = raw.options.rowAction;
+          if (raw.options.panelView === 'tree' || raw.options.panelView === 'tabs') {
+            options.panelView = raw.options.panelView;
           }
         }
         out.options = options;
@@ -574,6 +606,48 @@
         );
       }
 
+      /** 面板视图：缺省树形；只有显式 'tabs' 才走标签页，脏值一律回落默认。 */
+      function panelViewOf(state) {
+        const value =
+          state === null || state === undefined || state.options === undefined
+            ? undefined
+            : state.options.panelView;
+        return value === 'tabs' ? 'tabs' : DEFAULT_PANEL_VIEW;
+      }
+
+      /** 切换面板视图；与「最近」窗口、行尾开关共用同一份 options 持久化。 */
+      function setPanelView(view) {
+        const next = view === 'tabs' ? 'tabs' : DEFAULT_PANEL_VIEW;
+        if (next === panelViewOf(data)) return;
+        commitData(
+          Object.assign({}, data, {
+            options: Object.assign({}, data.options, { panelView: next })
+          })
+        );
+      }
+
+      /** 行尾「色盘」按钮是否显示：缺省显示，只有显式关掉才隐藏。 */
+      function rowActionVisible(state) {
+        return !(
+          state !== null &&
+          state !== undefined &&
+          state.options !== undefined &&
+          state.options !== null &&
+          state.options.rowAction === false
+        );
+      }
+
+      /** 开关行尾「色盘」按钮；会话行之外的入口（菜单 / 悬停卡片 / 面板）不受影响。 */
+      function setRowAction(on) {
+        const next = on !== false;
+        if (next === rowActionVisible(data)) return;
+        commitData(
+          Object.assign({}, data, {
+            options: Object.assign({}, data.options, { rowAction: next })
+          })
+        );
+      }
+
       /** 小时数的人话标签：≥2 整天用「N 天」，其余用「N 小时」。 */
       function hoursLabel(hours) {
         if (hours >= 48 && hours % 24 === 0) {
@@ -690,6 +764,7 @@
        * ------------------------------------------------------------------ */
 
       let sessionStore = null;
+      let workspaceStore = null;
       let uiWorkspace = null;
       let layout = null;
 
@@ -720,6 +795,17 @@
         }
       );
 
+      /* 宿主归档集：会话快照里没有这个字段，它归 Workspace 注册表管。
+         拿不到服务（老部署 / 无 Workspace 半区）时返回空集，行为与改动前一致。 */
+      const useWorkspaces = makeHook(
+        function () {
+          return workspaceStore === null ? null : workspaceStore.getSnapshot();
+        },
+        function (listener) {
+          return workspaceStore === null ? function () {} : workspaceStore.subscribe(listener);
+        }
+      );
+
       function openSession(sessionId) {
         try {
           if (uiWorkspace === null || typeof uiWorkspace.openSession !== 'function') return;
@@ -734,10 +820,23 @@
        * 面板模型（纯函数，便于离线测试）
        * ------------------------------------------------------------------ */
 
-      function buildPanelModel(state, sessionList, query) {
+      /**
+       * 从 Workspace 快照取出「宿主已归档」的会话 id 集。
+       * 快照缺失或形状不认识时给空集，调用方不必判空。
+       * @param {any} workspaceSnapshot - `ctx.workspaces.list` 的快照。
+       * @returns {Set<string>} 已归档会话 id。
+       */
+      function archivedIdsOf(workspaceSnapshot) {
+        if (workspaceSnapshot === null || workspaceSnapshot === undefined) return new Set();
+        const ids = workspaceSnapshot.archivedSessionIds;
+        return Array.isArray(ids) ? new Set(ids) : new Set();
+      }
+
+      function buildPanelModel(state, sessionList, query, archivedIds) {
         if (sessionList === null || sessionList === undefined) return null;
         if (sessionList.byId === null || typeof sessionList.byId !== 'object') return null;
 
+        const hidden = archivedIds instanceof Set ? archivedIds : new Set();
         const ids = Array.isArray(sessionList.ids) ? sessionList.ids : [];
         const needle = typeof query === 'string' ? query.trim().toLowerCase() : '';
         const rows = [];
@@ -751,6 +850,9 @@
           /* 子代理会话不上架：宿主左栏的 sessionVisible 同样按 origin 过滤，
              这里镜像同一规则，否则标签面板会列出一堆只属于某个父会话的子智能体。 */
           if (summary.origin === 'subagent') continue;
+          /* 宿主已归档的会话同样不上架：它们不在左栏，`openSession` 也进不去
+             （宿主会把主面板清成空白），列在这里只会变成「点一下就空」的陷阱。 */
+          if (hidden.has(id)) continue;
           seen.add(id);
           const title =
             typeof summary.displayTitle === 'string' && summary.displayTitle !== ''
@@ -960,6 +1062,9 @@
 
       function RowAction(props) {
         const app = useApp();
+        /* 设置里关掉行尾色盘后整颗按钮不渲染；菜单项、悬停卡片与面板都还在，
+           打标签的能力没有丢，只是不在行尾占位。 */
+        if (!rowActionVisible(app.data)) return null;
         const names = tagsOf(app.data, props.sessionId);
         const colors = names.slice(0, MAX_DISK_SLICES).map(function (name) {
           return colorOf(app.data, name);
@@ -1063,6 +1168,59 @@
               }
             },
             T('hover.edit')
+          )
+        );
+      }
+
+      /* ---------------------------- 通用设置行 ---------------------------- */
+
+      /**
+       * 「通用设置」里的一行：行尾色盘开关。
+       * 只控制 `sidebar.workspaces.session.row.action` 这颗按钮，宿主自己的
+       * 归档 / 置顶 不受影响，也不做任何 CSS 定向隐藏。
+       */
+      function RowActionSetting() {
+        const app = useApp();
+        const on = rowActionVisible(app.data);
+        return h(
+          'div',
+          {
+            className: 'stl_set',
+            'data-plugin-setting': ROW_ID + '.row-action',
+            'data-plugin-package': PLUGIN_PACKAGE
+          },
+          h(
+            'div',
+            { className: 'stl_setHead' },
+            h(
+              'div',
+              { className: 'stl_setText' },
+              h(
+                'div',
+                { className: 'stl_setTitle' },
+                T('row.title'),
+                h(
+                  'span',
+                  { className: 'stl_setBadge', title: fill(T('row.badgeTitle'), { package: PLUGIN_PACKAGE }) },
+                  T('row.badge')
+                )
+              ),
+              h('div', { className: 'stl_setDesc' }, T('row.desc'))
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                role: 'switch',
+                'aria-checked': on,
+                'aria-label': T(on ? 'row.disable' : 'row.enable'),
+                className: on ? 'stl_setSwitch stl_setOn' : 'stl_setSwitch',
+                onClick: function () {
+                  setRowAction(!on);
+                }
+              },
+              h('span', { className: 'stl_setThumb' })
+            )
           )
         );
       }
@@ -1361,12 +1519,16 @@
       function Panel() {
         const app = useApp();
         const sessionList = useSessions();
+        const workspaceSnapshot = useWorkspaces();
         const [query, setQuery] = React.useState('');
         const [showAllUntagged, setShowAllUntagged] = React.useState(false);
         const [quickId, setQuickId] = React.useState(null);
         const [quickDraft, setQuickDraft] = React.useState('');
         const [hoursOpen, setHoursOpen] = React.useState(false);
         const [hoursDraft, setHoursDraft] = React.useState('');
+        /** 标签页视图里当前选中的 tab；null 表示取第一个。打开面板时重置。 */
+        const [activeTabKey, setActiveTabKey] = React.useState(null);
+        const tabListRef = React.useRef(null);
         const wasOpen = React.useRef(false);
 
         React.useEffect(
@@ -1378,6 +1540,7 @@
               setQuickId(null);
               setQuickDraft('');
               setHoursOpen(false);
+              setActiveTabKey(null);
               setHoursDraft(String(recentHoursOf(app.data)));
             } else if (!app.ui.panel && wasOpen.current) {
               wasOpen.current = false;
@@ -1414,16 +1577,181 @@
 
         if (!app.ui.panel) return null;
 
-        const model = buildPanelModel(app.data, sessionList, query);
+        const model = buildPanelModel(app.data, sessionList, query, archivedIdsOf(workspaceSnapshot));
         const nowMs = Date.now();
 
-        const renderGroup = function (group) {
-          const searching = query.trim() !== '';
-          const collapsed = !searching && isCollapsed(app.data, group.key);
+        const searchingNow = query.trim() !== '';
+
+        /** 单个会话行：树形与标签页共用同一套行结构。 */
+        const renderRow = function (row, groupName) {
+          const dueInfo = row.due === '' ? null : formatDue(row.due);
+          const quick = quickId === row.id;
+          return h(
+            'div',
+            { key: row.id, className: 'stl_srowWrap' },
+            h(
+              'div',
+              {
+                className: 'stl_srow',
+                role: 'button',
+                tabIndex: 0,
+                title: row.title,
+                onClick: function () {
+                  openSession(row.id);
+                },
+                onKeyDown: function (event) {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    openSession(row.id);
+                  }
+                }
+              },
+              h('span', { className: 'stl_stitle', title: row.title }, row.title),
+              row.tags
+                .filter(function (name) {
+                  return name !== groupName;
+                })
+                .slice(0, 2)
+                .map(function (name) {
+                  return h(
+                    'span',
+                    { key: name, className: 'stl_sbadge' },
+                    h('span', {
+                      className: 'stl_sbadgeDot',
+                      style: { background: colorOf(app.data, name) }
+                    }),
+                    name
+                  );
+                }),
+              dueInfo === null
+                ? null
+                : h(
+                    'span',
+                    { className: 'stl_sdue' + (dueInfo.overdue ? ' stl_sdueLate' : '') },
+                    dueInfo.text
+                  ),
+              row.running ? h('span', { className: 'stl_run', title: T('panel.running') }) : null,
+              row.updatedAt > 0
+                ? h(
+                    'span',
+                    {
+                      className: 'stl_stime',
+                      title: new Date(row.updatedAt).toLocaleString()
+                    },
+                    relativeLabel(row.updatedAt, nowMs)
+                  )
+                : null,
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'stl_rowAct',
+                  title: T('panel.rowTag'),
+                  'aria-label': T('panel.rowTag'),
+                  'aria-expanded': quick,
+                  onClick: function (event) {
+                    event.stopPropagation();
+                    setQuickId(quick ? null : row.id);
+                    setQuickDraft('');
+                  }
+                },
+                quick ? '−' : '+'
+              )
+            ),
+            quick
+              ? h(
+                  'div',
+                  { className: 'stl_quick' },
+                  h(
+                    'div',
+                    { className: 'stl_quickHead' },
+                    fill(T('panel.quickTitle'), { title: row.title })
+                  ),
+                  h(
+                    'div',
+                    { className: 'stl_quickPool' },
+                    orderedPool(app.data).map(function (name) {
+                      const active = row.tags.indexOf(name) >= 0;
+                      const color = colorOf(app.data, name);
+                      return h(
+                        'button',
+                        {
+                          key: name,
+                          type: 'button',
+                          className: 'stl_quickChip' + (active ? ' stl_quickChipActive' : ''),
+                          style: {
+                            color: color,
+                            borderColor:
+                              'color-mix(in srgb, ' +
+                              color +
+                              ' ' +
+                              (active ? '55' : '25') +
+                              '%, transparent)'
+                          },
+                          title: active
+                            ? fill(T('editor.removeTag'), { name: name })
+                            : fill(T('editor.addTag'), { name: name }),
+                          onClick: function () {
+                            toggleSessionTag(row.id, name);
+                          }
+                        },
+                        h('span', { className: 'stl_quickDot', style: { background: color } }),
+                        (active ? '✓ ' : '+ ') + name
+                      );
+                    })
+                  ),
+                  h('input', {
+                    className: 'stl_input stl_quickInput',
+                    value: quickDraft,
+                    autoFocus: true,
+                    placeholder: T('panel.quickPlaceholder'),
+                    'aria-label': T('panel.quickPlaceholder'),
+                    onChange: function (event) {
+                      setQuickDraft(event.target.value);
+                    },
+                    onKeyDown: function (event) {
+                      if (event.key !== 'Enter') return;
+                      event.preventDefault();
+                      const parts = quickDraft.trim().split(/[,，]/);
+                      for (const part of parts) addSessionTag(row.id, part);
+                      setQuickDraft('');
+                    }
+                  })
+                )
+              : null
+          );
+        };
+
+        /** 组内行；「未打标」截断时在末尾补「显示全部 N 个」。 */
+        const renderRows = function (group) {
           const total = group.rows.length;
           const limited =
-            group.untagged && !searching && !showAllUntagged && total > UNTAGGED_PREVIEW;
+            group.untagged && !searchingNow && !showAllUntagged && total > UNTAGGED_PREVIEW;
           const visible = limited ? group.rows.slice(0, UNTAGGED_PREVIEW) : group.rows;
+          const nodes = visible.map(function (row) {
+            return renderRow(row, group.name);
+          });
+          if (limited) {
+            nodes.push(
+              h(
+                'button',
+                {
+                  key: group.key + ':more',
+                  type: 'button',
+                  className: 'stl_more',
+                  onClick: function () {
+                    setShowAllUntagged(true);
+                  }
+                },
+                fill(T('panel.showAll'), { n: total })
+              )
+            );
+          }
+          return nodes;
+        };
+
+        const renderGroup = function (group) {
+          const collapsed = !searchingNow && isCollapsed(app.data, group.key);
           return h(
             'div',
             { key: group.key, className: 'stl_group' },
@@ -1433,7 +1761,7 @@
                 type: 'button',
                 className: 'stl_ghead',
                 onClick: function () {
-                  if (searching) return;
+                  if (searchingNow) return;
                   toggleCollapsed(group.key);
                 }
               },
@@ -1446,184 +1774,119 @@
               h('span', { className: 'stl_gname' }, group.name),
               h('span', { className: 'stl_gcount' }, String(group.rows.length))
             ),
-            collapsed
-              ? null
-              : h(
-                  'div',
-                  { className: 'stl_grows' },
-                  visible.map(function (row) {
-                    const dueInfo = row.due === '' ? null : formatDue(row.due);
-                    const quick = quickId === row.id;
-                    return h(
-                      'div',
-                      { key: row.id, className: 'stl_srowWrap' },
-                      h(
-                        'div',
-                        {
-                          className: 'stl_srow',
-                          role: 'button',
-                          tabIndex: 0,
-                          title: row.title,
-                          onClick: function () {
-                            openSession(row.id);
-                          },
-                          onKeyDown: function (event) {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              openSession(row.id);
-                            }
-                          }
-                        },
-                        h('span', { className: 'stl_stitle', title: row.title }, row.title),
-                        row.tags
-                          .filter(function (name) {
-                            return name !== group.name;
-                          })
-                          .slice(0, 2)
-                          .map(function (name) {
-                            return h(
-                              'span',
-                              { key: name, className: 'stl_sbadge' },
-                              h('span', {
-                                className: 'stl_sbadgeDot',
-                                style: { background: colorOf(app.data, name) }
-                              }),
-                              name
-                            );
-                          }),
-                        dueInfo === null
-                          ? null
-                          : h(
-                              'span',
-                              { className: 'stl_sdue' + (dueInfo.overdue ? ' stl_sdueLate' : '') },
-                              dueInfo.text
-                            ),
-                        row.running
-                          ? h('span', { className: 'stl_run', title: T('panel.running') })
-                          : null,
-                        row.updatedAt > 0
-                          ? h(
-                              'span',
-                              {
-                                className: 'stl_stime',
-                                title: new Date(row.updatedAt).toLocaleString()
-                              },
-                              relativeLabel(row.updatedAt, nowMs)
-                            )
-                          : null,
-                        h(
-                          'button',
-                          {
-                            type: 'button',
-                            className: 'stl_rowAct',
-                            title: T('panel.rowTag'),
-                            'aria-label': T('panel.rowTag'),
-                            'aria-expanded': quick,
-                            onClick: function (event) {
-                              event.stopPropagation();
-                              setQuickId(quick ? null : row.id);
-                              setQuickDraft('');
-                            }
-                          },
-                          quick ? '−' : '+'
-                        )
-                      ),
-                      quick
-                        ? h(
-                            'div',
-                            { className: 'stl_quick' },
-                            h(
-                              'div',
-                              { className: 'stl_quickHead' },
-                              fill(T('panel.quickTitle'), { title: row.title })
-                            ),
-                            h(
-                              'div',
-                              { className: 'stl_quickPool' },
-                              orderedPool(app.data).map(function (name) {
-                                const active = row.tags.indexOf(name) >= 0;
-                                const color = colorOf(app.data, name);
-                                return h(
-                                  'button',
-                                  {
-                                    key: name,
-                                    type: 'button',
-                                    className: 'stl_quickChip' + (active ? ' stl_quickChipActive' : ''),
-                                    style: {
-                                      color: color,
-                                      borderColor:
-                                        'color-mix(in srgb, ' +
-                                        color +
-                                        ' ' +
-                                        (active ? '55' : '25') +
-                                        '%, transparent)'
-                                    },
-                                    title: active
-                                      ? fill(T('editor.removeTag'), { name: name })
-                                      : fill(T('editor.addTag'), { name: name }),
-                                    onClick: function () {
-                                      toggleSessionTag(row.id, name);
-                                    }
-                                  },
-                                  h('span', { className: 'stl_quickDot', style: { background: color } }),
-                                  (active ? '✓ ' : '+ ') + name
-                                );
-                              })
-                            ),
-                            h('input', {
-                              className: 'stl_input stl_quickInput',
-                              value: quickDraft,
-                              autoFocus: true,
-                              placeholder: T('panel.quickPlaceholder'),
-                              'aria-label': T('panel.quickPlaceholder'),
-                              onChange: function (event) {
-                                setQuickDraft(event.target.value);
-                              },
-                              onKeyDown: function (event) {
-                                if (event.key !== 'Enter') return;
-                                event.preventDefault();
-                                const parts = quickDraft.trim().split(/[,，]/);
-                                for (const part of parts) addSessionTag(row.id, part);
-                                setQuickDraft('');
-                              }
-                            })
-                          )
-                        : null
-                    );
-                  }),
-                  limited
-                    ? h(
-                        'button',
-                        {
-                          type: 'button',
-                          className: 'stl_more',
-                          onClick: function () {
-                            setShowAllUntagged(true);
-                          }
-                        },
-                        fill(T('panel.showAll'), { n: total })
-                      )
-                    : null
-                )
+            collapsed ? null : h('div', { className: 'stl_grows' }, renderRows(group))
           );
         };
 
-        const searchingNow = query.trim() !== '';
-        const hasRows =
-          model !== null &&
-          model.groups.some(function (group) {
-            return group.rows.length > 0;
-          });
-        const body =
+        const view = panelViewOf(app.data);
+        const groups = model === null ? [] : model.groups;
+        const hasRows = groups.some(function (group) {
+          return group.rows.length > 0;
+        });
+        const treeBody =
           model === null
             ? h('div', { className: 'stl_empty' }, T('panel.loading'))
             : searchingNow
-              ? model.groups.length === 0
+              ? groups.length === 0
                 ? h('div', { className: 'stl_empty' }, T('panel.empty'))
-                : model.groups.map(renderGroup)
+                : groups.map(renderGroup)
               : hasRows
-                ? model.groups.map(renderGroup)
+                ? groups.map(renderGroup)
                 : h('div', { className: 'stl_empty' }, T('panel.emptyIdle'));
+
+        /* 标签页视图：tab 直接复用分组序列（最近 → 待办 → 归档 → 自定义 → 未打标）。
+           搜索态 buildPanelModel 已过滤空组；浏览态保留空的待办/归档骨架。 */
+        const tabKeys = groups.map(function (group) {
+          return group.key;
+        });
+        const activeKey =
+          tabKeys.indexOf(activeTabKey) >= 0 ? activeTabKey : tabKeys.length > 0 ? tabKeys[0] : null;
+        const activeIndex = activeKey === null ? -1 : tabKeys.indexOf(activeKey);
+        const activeGroup = activeIndex < 0 ? null : groups[activeIndex];
+
+        const renderTab = function (group, index) {
+          const active = index === activeIndex;
+          return h(
+            'button',
+            {
+              key: group.key,
+              id: 'stl-tab-' + index,
+              type: 'button',
+              role: 'tab',
+              'aria-selected': active,
+              tabIndex: active ? 0 : -1,
+              className: 'stl_tab' + (active ? ' stl_tabActive' : ''),
+              title: group.name,
+              onClick: function () {
+                setActiveTabKey(group.key);
+              },
+              onKeyDown: function (event) {
+                if (tabKeys.length === 0) return;
+                let nextIndex = null;
+                if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabKeys.length;
+                else if (event.key === 'ArrowLeft') {
+                  nextIndex = (index - 1 + tabKeys.length) % tabKeys.length;
+                } else if (event.key === 'Home') nextIndex = 0;
+                else if (event.key === 'End') nextIndex = tabKeys.length - 1;
+                if (nextIndex === null) return;
+                event.preventDefault();
+                setActiveTabKey(tabKeys[nextIndex]);
+                const list = tabListRef.current;
+                if (list !== null && list !== undefined) {
+                  const buttons = list.querySelectorAll('[role="tab"]');
+                  if (buttons[nextIndex] !== undefined) buttons[nextIndex].focus();
+                }
+              }
+            },
+            group.icon === 'clock'
+              ? h('span', { className: 'stl_tabClock' }, h(ClockIcon, { size: 12 }))
+              : group.color === ''
+                ? h('span', { className: 'stl_tabDot stl_tabDotEmpty' })
+                : h('span', { className: 'stl_tabDot', style: { background: group.color } }),
+            h('span', { className: 'stl_tabName' }, group.name),
+            h('span', { className: 'stl_tabCount' }, String(group.rows.length))
+          );
+        };
+
+        const tabsBar =
+          view !== 'tabs' || model === null || groups.length === 0 || (!searchingNow && !hasRows)
+            ? null
+            : h(
+                'div',
+                {
+                  className: 'stl_tabs',
+                  role: 'tablist',
+                  'aria-label': T('panel.viewGroup'),
+                  ref: tabListRef
+                },
+                groups.map(renderTab)
+              );
+
+        const tabBody =
+          model === null
+            ? h('div', { className: 'stl_empty' }, T('panel.loading'))
+            : groups.length === 0 || (!searchingNow && !hasRows)
+              ? h(
+                  'div',
+                  { className: 'stl_empty' },
+                  searchingNow ? T('panel.empty') : T('panel.emptyIdle')
+                )
+              : activeGroup === null
+                ? h('div', { className: 'stl_empty' }, T('panel.empty'))
+                : activeGroup.rows.length === 0
+                  ? h('div', { className: 'stl_empty' }, T('panel.emptyGroup'))
+                  : h(
+                      'div',
+                      {
+                        className: 'stl_tabRows',
+                        role: 'tabpanel',
+                        id: 'stl-tabpanel',
+                        'aria-labelledby': 'stl-tab-' + activeIndex
+                      },
+                      renderRows(activeGroup)
+                    );
+
+        const body = view === 'tabs' ? tabBody : treeBody;
 
         return h(
           'div',
@@ -1648,6 +1911,34 @@
                 'div',
                 { className: 'stl_dtitles' },
                 h('div', { className: 'stl_dtitle', title: T('panel.guide') }, T('panel.heading'))
+              ),
+              h(
+                'div',
+                { className: 'stl_viewSeg', role: 'group', 'aria-label': T('panel.viewGroup') },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'stl_viewBtn' + (view === 'tree' ? ' stl_viewBtnActive' : ''),
+                    'aria-pressed': view === 'tree',
+                    onClick: function () {
+                      setPanelView('tree');
+                    }
+                  },
+                  T('panel.viewTree')
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'stl_viewBtn' + (view === 'tabs' ? ' stl_viewBtnActive' : ''),
+                    'aria-pressed': view === 'tabs',
+                    onClick: function () {
+                      setPanelView('tabs');
+                    }
+                  },
+                  T('panel.viewTabs')
+                )
               ),
               h(
                 'div',
@@ -1763,6 +2054,7 @@
                 }
               })
             ),
+            tabsBar,
             h('div', { className: 'stl_dbody' }, body),
             h(
               'div',
@@ -1860,6 +2152,23 @@
         '.stl_hoursApply{border:.5px solid var(--dsw-alias-border-l1);background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;padding:3px 8px;border-radius:5px;cursor:pointer}',
         '.stl_hoursApply:hover{background:var(--dsw-alias-interactive-bg-hover)}',
         '.stl_hoursTip{font-size:10px;color:var(--dsw-alias-label-tertiary);padding:2px 6px 4px}',
+        /* 面板视图切换：树形 / 标签页，紧凑分段控件。 */
+        '.stl_viewSeg{display:inline-flex;align-items:center;gap:2px;padding:2px;border:.5px solid var(--dsw-alias-border-l1);border-radius:8px;flex:none}',
+        '.stl_viewBtn{border:0;background:0 0;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11px;line-height:18px;padding:2px 8px;border-radius:6px;cursor:pointer;white-space:nowrap}',
+        '.stl_viewBtn:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
+        '.stl_viewBtnActive{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-weight:600}',
+        /* 标签页栏：超过一行自动换行（VSCode wrap-tabs），最多 150px 后内部滚动。 */
+        '.stl_tabs{display:flex;flex-wrap:wrap;align-items:center;align-content:flex-start;gap:4px;padding:8px 14px 7px;border-bottom:.5px solid var(--dsw-alias-border-l1);flex:none;max-height:150px;overflow-y:auto}',
+        '.stl_tab{display:inline-flex;align-items:center;gap:6px;max-width:220px;min-width:0;height:28px;padding:0 8px;border:.5px solid transparent;border-radius:6px;background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer;flex:0 1 auto;text-align:left}',
+        '.stl_tab:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+        '.stl_tab:focus-visible{outline:1px solid var(--dsw-alias-border-l2);outline-offset:-1px}',
+        '.stl_tabActive{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:inset 0 -2px 0 var(--dsw-alias-brand-primary)}',
+        '.stl_tabDot{width:7px;height:7px;border-radius:50%;flex:none}',
+        '.stl_tabDotEmpty{border:.5px solid var(--dsw-alias-label-tertiary)}',
+        '.stl_tabClock{display:inline-flex;align-items:center;justify-content:center;width:12px;flex:none;color:var(--dsw-alias-label-tertiary)}',
+        '.stl_tabName{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+        '.stl_tabCount{flex:none;font-size:10px;line-height:15px;padding:0 5px;border-radius:8px;border:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-weight:400;font-variant-numeric:tabular-nums}',
+        '.stl_tabRows{display:flex;flex-direction:column}',
         '.stl_dbody{flex:1;overflow:auto;padding:10px 14px 12px}',
         '.stl_psearch{padding:10px 14px 0;flex:none}',
         '.stl_dfoot{display:flex;align-items:center;justify-content:flex-end;gap:6px;padding:8px 12px;border-top:.5px solid var(--dsw-alias-border-l1);flex:none;flex-wrap:wrap}',
@@ -1928,7 +2237,18 @@
         '.stl_srowWrap:hover .stl_stime{opacity:0}',
         '.stl_sdueLate{color:var(--dsw-alias-state-error-primary)}',
         '.stl_run{width:7px;height:7px;border-radius:50%;border:1.5px solid var(--dsw-alias-state-success-primary);border-top-color:transparent;flex:none;animation:stl_spin 1s linear infinite}',
-        '@keyframes stl_spin{to{transform:rotate(360deg)}}'
+        '@keyframes stl_spin{to{transform:rotate(360deg)}}',
+        /* 通用设置行：与宿主 / 其他模组（pin / active / running）同构。 */
+        '.stl_set{border-bottom:.5px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column;gap:8px;padding:16px 0}',
+        '.stl_setHead{display:flex;align-items:center;justify-content:space-between;gap:16px}',
+        '.stl_setText{display:flex;flex-direction:column;gap:2px;min-width:0}',
+        '.stl_setTitle{color:var(--dsw-alias-label-primary);font-size:14px;line-height:22px}',
+        '.stl_setBadge{display:inline-flex;align-items:center;flex:none;margin-left:8px;padding:0 6px;height:18px;border:1px solid var(--dsw-alias-border-l3);border-radius:999px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-weight:400;letter-spacing:.02em;white-space:nowrap;vertical-align:middle}',
+        '.stl_setDesc{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+        '.stl_setSwitch{box-sizing:border-box;flex:none;width:36px;height:20px;padding:2px;border:0;border-radius:10px;background:var(--dsw-alias-border-l3);cursor:pointer;display:flex;align-items:center;transition:background .15s ease}',
+        '.stl_setSwitch.stl_setOn{background:var(--dsw-alias-brand-primary)}',
+        '.stl_setThumb{width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-switch-thumb);transition:transform .15s ease}',
+        '.stl_setSwitch.stl_setOn .stl_setThumb{transform:translateX(16px)}'
       ].join('\n');
 
       /* ------------------------------------------------------------------ *
@@ -1976,6 +2296,16 @@
         }
         const workspaceApi = ctx.get('uiWorkspace');
         if (workspaceApi !== undefined && workspaceApi !== null) uiWorkspace = workspaceApi;
+        /* 归档集来自 Workspace 注册表快照；没有这个服务时面板照旧显示全部会话。 */
+        const workspaceRegistry = ctx.get('workspaces');
+        if (
+          workspaceRegistry !== undefined &&
+          workspaceRegistry !== null &&
+          workspaceRegistry.list !== undefined &&
+          workspaceRegistry.list !== null
+        ) {
+          workspaceStore = workspaceRegistry.list;
+        }
         const layoutApi = ctx.get('layout');
         if (layoutApi !== undefined && layoutApi !== null) layout = layoutApi;
 
@@ -1997,6 +2327,13 @@
           return ctx.slots.register(
             { name: 'sidebar.workspaces.session.menu.item', id: 'session-tag-lite', order: 350, locale: NS },
             MenuItem
+          );
+        });
+
+        ctx.slots.inject('settings.general.item', function () {
+          return ctx.slots.register(
+            { name: 'settings.general.item', id: 'session-tag-lite', order: SETTINGS_ORDER, locale: NS },
+            RowActionSetting
           );
         });
 
@@ -2045,6 +2382,7 @@
         ctx.effect(function () {
           return function () {
             sessionStore = null;
+            workspaceStore = null;
             uiWorkspace = null;
             layout = null;
           };
@@ -2078,6 +2416,11 @@
           isCollapsed: isCollapsed,
           recentHoursOf: recentHoursOf,
           setRecentHours: setRecentHours,
+          panelViewOf: panelViewOf,
+          setPanelView: setPanelView,
+          DEFAULT_PANEL_VIEW: DEFAULT_PANEL_VIEW,
+          rowActionVisible: rowActionVisible,
+          setRowAction: setRowAction,
           hoursLabel: hoursLabel,
           pickAutoColor: pickAutoColor,
           setTagColor: setTagColor,
@@ -2087,6 +2430,10 @@
           setDue: setDue,
           toggleCollapsed: toggleCollapsed,
           buildPanelModel: buildPanelModel,
+          archivedIdsOf: archivedIdsOf,
+          menuLabel: function () {
+            return T('menu.label');
+          },
           getSnapshot: getSnapshot,
           getData: function () {
             return data;
