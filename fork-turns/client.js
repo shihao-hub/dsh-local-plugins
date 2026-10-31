@@ -2,7 +2,7 @@
  * Client half of the fork-turns bundle.
  *
  * Two seats:
- *   - `conversation.input.right` — a compact button in the composer tool row.
+ *   - `sidebar.workspaces.session.menu.item` — the Session row "..." menu entry.
  *   - `shell.overlay` — the turn picker dialog it opens.
  *
  * The picker asks the Host route for the current Session's turns, lets the
@@ -31,8 +31,7 @@
        * ------------------------------------------------------------------ */
 
       const zh = {
-        'button.label': '分叉轮次',
-        'button.title': '挑选几个轮次，生成只包含它们的新会话',
+        'menu.fork': '分叉选中轮次',
         'panel.title': '挑选轮次分叉',
         'panel.hint': '只把勾选的轮次带入新会话；进行中的轮次不可选。',
         'panel.empty': '这个会话还没有可选的轮次。',
@@ -52,8 +51,7 @@
       };
 
       const en = {
-        'button.label': 'Fork turns',
-        'button.title': 'Pick a few turns and fork a session that contains only them',
+        'menu.fork': 'Fork selected turns',
         'panel.title': 'Fork selected turns',
         'panel.hint': 'Only the checked turns enter the new session; a running turn cannot be picked.',
         'panel.empty': 'This session has no pickable turns yet.',
@@ -311,7 +309,7 @@
        * ------------------------------------------------------------------ */
 
       /**
-       * Plugin mark used by the composer button.
+       * Plugin mark used by the row menu entry.
        * @returns {any} React node.
        */
       function markIcon() {
@@ -323,7 +321,6 @@
             height: 14,
             fill: 'none',
             'aria-hidden': true,
-            className: 'ft_btnIcon',
           },
           h('path', {
             d: 'M6 6.5v7a4.5 4.5 0 0 0 4.5 4.5H13',
@@ -354,39 +351,6 @@
           return String(part).padStart(2, '0');
         };
         return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-      }
-
-      /**
-       * Composer tool-row entry.
-       * @param {any} props - session scope props.
-       * @returns {any} button or null.
-       */
-      function ForkButton(props) {
-        const fromSnapshot = typeof props.useSession === 'function'
-          ? props.useSession(function (snapshot) {
-              return snapshot === undefined || snapshot === null ? undefined : snapshot.sessionId;
-            })
-          : undefined;
-        const sessionId = typeof props.sessionId === 'string' && props.sessionId !== ''
-          ? props.sessionId
-          : typeof fromSnapshot === 'string'
-            ? fromSnapshot
-            : '';
-        if (sessionId === '') return null;
-        return h(
-          'button',
-          {
-            type: 'button',
-            className: 'ft_btn',
-            title: T('button.title'),
-            'aria-label': T('button.label'),
-            onClick: function () {
-              openPanel(sessionId);
-            },
-          },
-          markIcon(),
-          h('span', { className: 'ft_btnLabel' }, T('button.label'))
-        );
       }
 
       /**
@@ -433,6 +397,53 @@
               : null
           ),
           h('span', { className: 'ft_meta' }, meta.join(' · '))
+        );
+      }
+
+      /**
+       * Read one catalog row without opening the Session.
+       * @param {string} sessionId - Session identity.
+       * @returns {any | undefined} catalog summary.
+       */
+      function summaryFor(sessionId) {
+        const list = runtime.sessions === null ? undefined : runtime.sessions.list;
+        if (list === undefined || typeof list.getSnapshot !== 'function') return undefined;
+        try {
+          const snapshot = list.getSnapshot();
+          return snapshot === null || snapshot === undefined || snapshot.byId === undefined
+            ? undefined
+            : snapshot.byId[sessionId];
+        } catch {
+          return undefined;
+        }
+      }
+
+      /**
+       * Session-row "..." menu entry: opens the same picker for that row.
+       * Blank Sessions have no turns, so they do not offer the entry.
+       * @param {any} props - row owner props plus the menu-open hook.
+       * @returns {any} menu item or null.
+       */
+      function ForkMenuItem(props) {
+        const menuHook = typeof props.useMenuOpenState === 'function' ? props.useMenuOpenState : null;
+        const pair = menuHook === null ? null : menuHook();
+        const sessionId = typeof props.sessionId === 'string' ? props.sessionId : '';
+        if (sessionId === '') return null;
+        const summary = summaryFor(sessionId);
+        if (summary !== undefined && summary.blank === true) return null;
+        return h(
+          'button',
+          {
+            type: 'button',
+            role: 'menuitem',
+            className: 'ft_mitem',
+            onClick: function () {
+              if (pair !== null && typeof pair[1] === 'function') pair[1](false);
+              openPanel(sessionId);
+            },
+          },
+          h('span', { className: 'ft_miglyph', 'aria-hidden': 'true' }, markIcon()),
+          h('span', { className: 'ft_milabel' }, T('menu.fork'))
         );
       }
 
@@ -571,11 +582,10 @@
        * ------------------------------------------------------------------ */
 
       const CSS = [
-        '.ft_btn{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 8px;border:0;border-radius:6px;background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap}',
-        '.ft_btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-        '.ft_btn:focus-visible{outline:1px solid var(--dsw-alias-border-l2);outline-offset:1px}',
-        '.ft_btnIcon{flex:none;display:block}',
-        '.ft_btnLabel{max-width:9em;overflow:hidden;text-overflow:ellipsis}',
+        '.ft_mitem{display:flex;align-items:center;gap:8px;width:100%;padding:5px 10px;border:0;background:0 0;color:var(--dsw-alias-label-primary);font:inherit;font-size:var(--dsh-title-font-size,13px);text-align:left;cursor:pointer;border-radius:4px}',
+        '.ft_mitem:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+        '.ft_miglyph{display:inline-flex;align-items:center;width:16px;flex:none}',
+        '.ft_milabel{flex:1;white-space:nowrap}',
         '.ft_backdrop{position:fixed;inset:0;z-index:1000;display:flex;align-items:flex-start;justify-content:center;padding:10vh 16px 16px;background:rgba(0,0,0,.42);pointer-events:auto}',
         '.ft_dialog{display:flex;flex-direction:column;width:min(560px,94vw);max-height:74vh;background:var(--dsw-alias-bg-overlay);border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;box-shadow:0 16px 40px rgba(0,0,0,.38);color:var(--dsw-alias-label-primary);font-size:var(--dsh-title-font-size,13px);overflow:hidden;outline:none}',
         '.ft_head{display:flex;align-items:flex-start;gap:10px;padding:12px 14px 10px;border-bottom:.5px solid var(--dsw-alias-border-l1);flex:none}',
@@ -649,10 +659,10 @@
           };
         }, 'fork-turns: stylesheet');
 
-        ctx.slots.inject('conversation.input.right', function () {
+        ctx.slots.inject('sidebar.workspaces.session.menu.item', function () {
           return ctx.slots.register(
-            { name: 'conversation.input.right', id: 'fork-turns', order: 40, locale: NS },
-            ForkButton
+            { name: 'sidebar.workspaces.session.menu.item', id: 'fork-turns-menu', order: 360, locale: NS },
+            ForkMenuItem
           );
         });
 
