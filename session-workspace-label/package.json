@@ -1,0 +1,31 @@
+{
+  "name": "@local/session-workspace-label",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shows each sidebar session's Workspace as a small subtitle under its title (agy-style), so the flat 'in one list' view can tell mixed sessions apart.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "self-test.mjs",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

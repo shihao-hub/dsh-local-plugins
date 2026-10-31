@@ -1,0 +1,6 @@
+# Session workspace labels: the Client half does all of the work, so the Host
+# row only has to resolve for the patch to apply. Nothing is written to the
+# Host; the display mode lives in the browser's localStorage.
+- insert:
+    - id: session-workspace-label
+      name: '@local/session-workspace-label'
