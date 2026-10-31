@@ -38,10 +38,18 @@
 
       /** 固定语义标签：始终排在池首，不参与「未使用自动清理」。 */
       const TODO = '待办';
-      const ARCHIVE = '归档';
+      const ARCHIVE = '存档';
+      /** 旧版保留名：读入时迁移到「存档」，避免用户已打的标签丢成孤儿。 */
+      const LEGACY_ARCHIVE = '归档';
       const RESERVED = [TODO, ARCHIVE];
       const UNTAGGED = '未打标';
       const UNTAGGED_KEY = '__untagged__';
+
+      /**
+       * 左栏单列表的标签排序权重：数组里越靠前，会话越靠后（本期只有「存档」）。
+       * 后续要做「多重排序」时在这里加名字即可，DOM 同步逻辑不用动。
+       */
+      const TAG_FOOT_ORDER = [ARCHIVE];
 
       const MAX_NAME_LEN = 24;
       /** 行尾色盘最多显示几段颜色；超过时只取前几段，完整标签名放在 title 里。 */
@@ -123,7 +131,11 @@
         'row.badgeTitle': '由插件 {package} 提供',
         'row.desc': '关闭后会话行尾不再出现色盘；仍可用「… → 编辑标签」打标签',
         'row.enable': '显示行尾标签按钮',
-        'row.disable': '隐藏行尾标签按钮'
+        'row.disable': '隐藏行尾标签按钮',
+        'order.title': '存档标签置底',
+        'order.desc': '左侧单列表里，打了「存档」标签的会话排在最后；分组视图不受影响',
+        'order.enable': '开启存档标签置底',
+        'order.disable': '关闭存档标签置底'
       };
 
       const en = {
@@ -184,7 +196,11 @@
         'row.badgeTitle': 'Provided by plugin {package}',
         'row.desc': 'Hides the swatch at the end of each Session row; you can still tag through “…” → Edit tags',
         'row.enable': 'Show the tag button',
-        'row.disable': 'Hide the tag button'
+        'row.disable': 'Hide the tag button',
+        'order.title': 'Archived-tag Sessions last',
+        'order.desc': 'In the flat Session list, Sessions tagged “存档” go to the bottom; grouped views are unchanged',
+        'order.enable': 'Send archived-tag Sessions last',
+        'order.disable': 'Stop sending archived-tag Sessions last'
       };
 
       /* ------------------------------------------------------------------ *
@@ -221,7 +237,7 @@
         return HASH_COLORS[Math.abs(hash) % HASH_COLORS.length];
       }
 
-      /** 标签颜色：待办 / 归档固定语义色；其余优先用户选定的颜色，缺省回退哈希。 */
+      /** 标签颜色：待办 / 存档固定语义色；其余优先用户选定的颜色，缺省回退哈希。 */
       function colorOf(state, name) {
         if (name === TODO) return TODO_COLOR;
         if (name === ARCHIVE) return ARCHIVE_COLOR;
@@ -309,7 +325,12 @@
           due: {},
           collapsed: {},
           colors: {},
-          options: { recentHours: DEFAULT_RECENT_HOURS, rowAction: true, panelView: DEFAULT_PANEL_VIEW }
+          options: {
+            recentHours: DEFAULT_RECENT_HOURS,
+            rowAction: true,
+            panelView: DEFAULT_PANEL_VIEW,
+            archiveLast: true
+          }
         };
       }
 
@@ -319,18 +340,30 @@
       }
 
       /**
+       * 旧名到新名的唯一映射点：标签池、marks、collapsed 与用户输入共用。
+       * 输入「归档」等同于输入「存档」，避免池里同时出现两个近义保留名。
+       */
+      function canonicalName(value) {
+        const name = normalizeName(value);
+        return name === LEGACY_ARCHIVE ? ARCHIVE : name;
+      }
+
+      /**
        * 读入即规范化：脏数据一律丢弃；marks 引用到的名字回填到池；
        * 池里已无任何会话使用、且不是保留名的标签被清理（typeai 无删除标签界面，
-       * 标签随最后一个引用消失）。
+       * 标签随最后一个引用消失）。旧版保留名「归档」在这里迁移成「存档」。
        */
       function normalizeData(raw) {
         const out = emptyData();
         out.tags = RESERVED.slice();
         if (raw === null || typeof raw !== 'object') return out;
 
+        /* 旧名到新名的唯一映射点：标签池、marks、collapsed 三处共用。 */
+        const canonical = canonicalName;
+
         const seen = new Set(RESERVED);
         const addName = function (value) {
-          const name = normalizeName(value);
+          const name = canonical(value);
           if (name === '' || seen.has(name)) return;
           seen.add(name);
           out.tags.push(name);
@@ -347,7 +380,7 @@
             if (!Array.isArray(list)) continue;
             const names = [];
             for (const value of list) {
-              const name = normalizeName(value);
+              const name = canonical(value);
               if (name === '' || names.indexOf(name) >= 0) continue;
               names.push(name);
               addName(name);
@@ -369,12 +402,23 @@
         const collapsed = {};
         if (raw.collapsed !== null && typeof raw.collapsed === 'object') {
           for (const key of Object.keys(raw.collapsed)) {
-            if (typeof raw.collapsed[key] === 'boolean') collapsed[key] = raw.collapsed[key];
+            if (typeof raw.collapsed[key] !== 'boolean') continue;
+            if (key === LEGACY_ARCHIVE) {
+              /* 新旧键同时存在时以新键为准。 */
+              if (raw.collapsed[ARCHIVE] === undefined) collapsed[ARCHIVE] = raw.collapsed[key];
+              continue;
+            }
+            collapsed[key] = raw.collapsed[key];
           }
         }
         out.collapsed = collapsed;
 
-        const options = { recentHours: DEFAULT_RECENT_HOURS, rowAction: true, panelView: DEFAULT_PANEL_VIEW };
+        const options = {
+          recentHours: DEFAULT_RECENT_HOURS,
+          rowAction: true,
+          panelView: DEFAULT_PANEL_VIEW,
+          archiveLast: true
+        };
         if (raw.options !== null && typeof raw.options === 'object') {
           const hours = raw.options.recentHours;
           if (typeof hours === 'number' && Number.isFinite(hours)) {
@@ -387,6 +431,7 @@
           if (raw.options.panelView === 'tree' || raw.options.panelView === 'tabs') {
             options.panelView = raw.options.panelView;
           }
+          if (typeof raw.options.archiveLast === 'boolean') options.archiveLast = raw.options.archiveLast;
         }
         out.options = options;
 
@@ -449,6 +494,8 @@
             /* 单个订阅者出错不影响其他订阅者 */
           }
         }
+        /* 标签变化会改变左栏排序：让单列表里的「存档」行重新落位。 */
+        scheduleSidebarOrderRefresh();
       }
 
       function persist() {
@@ -648,6 +695,28 @@
         );
       }
 
+      /** 左栏单列表的「存档置底」：缺省开启，只有显式关掉才失效。 */
+      function archiveLastOn(state) {
+        return !(
+          state !== null &&
+          state !== undefined &&
+          state.options !== undefined &&
+          state.options !== null &&
+          state.options.archiveLast === false
+        );
+      }
+
+      /** 开关「存档置底」；与行尾开关、面板视图共用同一份 options。 */
+      function setArchiveLast(on) {
+        const next = on !== false;
+        if (next === archiveLastOn(data)) return;
+        commitData(
+          Object.assign({}, data, {
+            options: Object.assign({}, data.options, { archiveLast: next })
+          })
+        );
+      }
+
       /** 小时数的人话标签：≥2 整天用「N 天」，其余用「N 小时」。 */
       function hoursLabel(hours) {
         if (hours >= 48 && hours % 24 === 0) {
@@ -671,7 +740,7 @@
       }
 
       function addSessionTag(sessionId, rawName) {
-        const name = normalizeName(rawName);
+        const name = canonicalName(rawName);
         if (sessionId === '' || name === '') return;
 
         const names = tagsOf(data, sessionId);
@@ -690,7 +759,7 @@
         commitData(Object.assign({}, data, { tags: tags, marks: marks, colors: colors }));
       }
 
-      /** 改某个自定义标签的颜色（全局生效；待办 / 归档固定色不可改）。 */
+      /** 改某个自定义标签的颜色（全局生效；待办 / 存档固定色不可改）。 */
       function setTagColor(name, color) {
         const clean = normalizeName(name);
         if (clean === '' || RESERVED.indexOf(clean) >= 0) return;
@@ -814,6 +883,88 @@
         } catch (error) {
           warn('打开会话失败', error);
         }
+      }
+
+      /* ------------------------------------------------------------------ *
+       * 左栏单列表排序：标签序置底
+       *
+       * 宿主 ui-workspace 的「单列表」是一个 role="tree" 的块级流容器，没有排序
+       * 座位；这里不接管列表，只做两件事：
+       *   1. 给扁平列表容器加 display:flex（插件类），让 CSS order 生效；
+       *   2. 给带「存档」标签的行包装加 data-stl-foot，CSS 把它排到末尾。
+       *
+       * 为什么不是 DOM 重排：宿主用 keyed children 渲染，插件挪动节点会被下一次
+       * commit 复原；order 只影响视觉，不写宿主状态，切视图 / 刷新都能重建。
+       * 代价是视觉顺序与 DOM（键盘遍历、拖拽落点）顺序不一致，README 已记。
+       * ------------------------------------------------------------------ */
+
+      const FLAT_ORDER_CLASS = 'stl_flatOrder';
+      const ROW_FOOT_ATTR = 'data-stl-foot';
+      let orderObserver = null;
+      let orderFrame = 0;
+
+      /** 这个容器是不是宿主的「单列表」：CSS Module 类名以 `_flatList` 结尾。 */
+      function isFlatListTree(tree) {
+        for (const name of Array.from(tree.classList)) {
+          if (name.slice(-9) === '_flatList') return true;
+        }
+        return false;
+      }
+
+      /** 标签排序权重：命中越靠前的名字权重越高；0 表示不置底。 */
+      function tagFootRank(names) {
+        let rank = 0;
+        for (let i = 0; i < TAG_FOOT_ORDER.length; i += 1) {
+          if (names.indexOf(TAG_FOOT_ORDER[i]) >= 0) {
+            rank = Math.max(rank, TAG_FOOT_ORDER.length - i);
+          }
+        }
+        return rank;
+      }
+
+      /** 重新标记单列表里的置底行；容器不存在或开关关闭时清掉插件痕迹。 */
+      function refreshSidebarOrder() {
+        if (typeof document === 'undefined' || document.body === null) return;
+        const enabled = archiveLastOn(data);
+        const marks = data.marks === null || typeof data.marks !== 'object' ? {} : data.marks;
+        for (const tree of Array.from(document.querySelectorAll('[role="tree"]'))) {
+          if (!isFlatListTree(tree) || !enabled) {
+            tree.classList.remove(FLAT_ORDER_CLASS);
+            for (const child of Array.from(tree.children)) child.removeAttribute(ROW_FOOT_ATTR);
+            continue;
+          }
+          tree.classList.add(FLAT_ORDER_CLASS);
+          for (const child of Array.from(tree.children)) {
+            if (child.tagName !== 'SPAN') continue;
+            const row = child.querySelector('[data-row-key^="session:"]');
+            const key = row === null ? '' : row.getAttribute('data-row-key') || '';
+            const id = key.slice('session:'.length);
+            const names = Array.isArray(marks[id]) ? marks[id] : [];
+            if (tagFootRank(names) > 0) child.setAttribute(ROW_FOOT_ATTR, '');
+            else child.removeAttribute(ROW_FOOT_ATTR);
+          }
+        }
+      }
+
+      /** 合并同一帧内的多次重建请求（宿主列表会因标签、筛选、切视图反复渲染）。 */
+      function scheduleSidebarOrderRefresh() {
+        if (typeof document === 'undefined' || typeof requestAnimationFrame !== 'function') return;
+        if (orderFrame !== 0) return;
+        orderFrame = requestAnimationFrame(function () {
+          orderFrame = 0;
+          refreshSidebarOrder();
+        });
+      }
+
+      /**
+       * 这次 DOM 变化是否碰得到会话列表：聊天流每个 token 都会改 DOM，
+       * 只在列表自身变动（行增删、切视图、容器重建）时才重新标记。
+       */
+      function touchesSidebarTree(record) {
+        const target = record === null ? null : record.target;
+        if (target === null || target === undefined || target.nodeType !== 1) return false;
+        if (typeof target.closest === 'function' && target.closest('[role="tree"]') !== null) return true;
+        return typeof target.querySelector === 'function' && target.querySelector('[role="tree"]') !== null;
       }
 
       /* ------------------------------------------------------------------ *
@@ -961,7 +1112,7 @@
           });
         }
 
-        /* 浏览态保留「待办 / 归档」两个组头（即使为空），让分类骨架稳定；
+        /* 浏览态保留「待办 / 存档」两个组头（即使为空），让分类骨架稳定；
            搜索态只保留有命中的组，避免一堆 0 计数干扰。 */
         return {
           groups:
@@ -1217,6 +1368,56 @@
                 className: on ? 'stl_setSwitch stl_setOn' : 'stl_setSwitch',
                 onClick: function () {
                   setRowAction(!on);
+                }
+              },
+              h('span', { className: 'stl_setThumb' })
+            )
+          )
+        );
+      }
+
+      /**
+       * 「通用设置」第二行：左栏单列表的「存档标签置底」开关。
+       * 只改视觉排序，不写宿主的手动排序顺序，也不碰归档 / 置顶。
+       */
+      function ArchiveLastSetting() {
+        const app = useApp();
+        const on = archiveLastOn(app.data);
+        return h(
+          'div',
+          {
+            className: 'stl_set',
+            'data-plugin-setting': ROW_ID + '.archive-last',
+            'data-plugin-package': PLUGIN_PACKAGE
+          },
+          h(
+            'div',
+            { className: 'stl_setHead' },
+            h(
+              'div',
+              { className: 'stl_setText' },
+              h(
+                'div',
+                { className: 'stl_setTitle' },
+                T('order.title'),
+                h(
+                  'span',
+                  { className: 'stl_setBadge', title: fill(T('row.badgeTitle'), { package: PLUGIN_PACKAGE }) },
+                  T('row.badge')
+                )
+              ),
+              h('div', { className: 'stl_setDesc' }, T('order.desc'))
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                role: 'switch',
+                'aria-checked': on,
+                'aria-label': T(on ? 'order.disable' : 'order.enable'),
+                className: on ? 'stl_setSwitch stl_setOn' : 'stl_setSwitch',
+                onClick: function () {
+                  setArchiveLast(!on);
                 }
               },
               h('span', { className: 'stl_setThumb' })
@@ -1794,8 +1995,8 @@
                 ? groups.map(renderGroup)
                 : h('div', { className: 'stl_empty' }, T('panel.emptyIdle'));
 
-        /* 标签页视图：tab 直接复用分组序列（最近 → 待办 → 归档 → 自定义 → 未打标）。
-           搜索态 buildPanelModel 已过滤空组；浏览态保留空的待办/归档骨架。 */
+        /* 标签页视图：tab 直接复用分组序列（最近 → 待办 → 存档 → 自定义 → 未打标）。
+           搜索态 buildPanelModel 已过滤空组；浏览态保留空的待办/存档骨架。 */
         const tabKeys = groups.map(function (group) {
           return group.key;
         });
@@ -2248,7 +2449,11 @@
         '.stl_setSwitch{box-sizing:border-box;flex:none;width:36px;height:20px;padding:2px;border:0;border-radius:10px;background:var(--dsw-alias-border-l3);cursor:pointer;display:flex;align-items:center;transition:background .15s ease}',
         '.stl_setSwitch.stl_setOn{background:var(--dsw-alias-brand-primary)}',
         '.stl_setThumb{width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-switch-thumb);transition:transform .15s ease}',
-        '.stl_setSwitch.stl_setOn .stl_setThumb{transform:translateX(16px)}'
+        '.stl_setSwitch.stl_setOn .stl_setThumb{transform:translateX(16px)}',
+        /* 左栏单列表：把带「存档」标签的行排到末尾（只改视觉顺序，不动宿主状态）。 */
+        '.stl_flatOrder{display:flex;flex-direction:column}',
+        '.stl_flatOrder>*{flex:0 0 auto}',
+        '.stl_flatOrder>*[data-stl-foot]{order:1}'
       ].join('\n');
 
       /* ------------------------------------------------------------------ *
@@ -2337,6 +2542,48 @@
           );
         });
 
+        ctx.slots.inject('settings.general.item', function () {
+          return ctx.slots.register(
+            { name: 'settings.general.item', id: 'session-tag-lite-order', order: SETTINGS_ORDER + 1, locale: NS },
+            ArchiveLastSetting
+          );
+        });
+
+        /* 左栏单列表的置底标记：宿主渲染完才存在，靠 MutationObserver 补标。
+           只观察 childList（不观察 attributes），插件自己写 data-stl-foot 不会自喂。 */
+        ctx.effect(function () {
+          if (typeof document === 'undefined' || typeof MutationObserver !== 'function') {
+            return function () {};
+          }
+          const Observer = MutationObserver;
+          orderObserver = new Observer(function (records) {
+            for (const record of records) {
+              if (touchesSidebarTree(record)) {
+                scheduleSidebarOrderRefresh();
+                return;
+              }
+            }
+          });
+          if (document.body !== null) {
+            orderObserver.observe(document.body, { childList: true, subtree: true });
+          }
+          refreshSidebarOrder();
+          return function () {
+            if (orderObserver !== null) {
+              orderObserver.disconnect();
+              orderObserver = null;
+            }
+            if (orderFrame !== 0 && typeof cancelAnimationFrame === 'function') {
+              cancelAnimationFrame(orderFrame);
+              orderFrame = 0;
+            }
+            for (const tree of Array.from(document.querySelectorAll('.' + FLAT_ORDER_CLASS))) {
+              tree.classList.remove(FLAT_ORDER_CLASS);
+              for (const child of Array.from(tree.children)) child.removeAttribute(ROW_FOOT_ATTR);
+            }
+          };
+        }, 'session-tag-lite: sidebar order');
+
         ctx.slots.inject('sidebar.session.row.hover', function () {
           return ctx.slots.register(
             { name: 'sidebar.session.row.hover', id: 'session-tag-lite', order: 20, locale: NS },
@@ -2421,6 +2668,12 @@
           DEFAULT_PANEL_VIEW: DEFAULT_PANEL_VIEW,
           rowActionVisible: rowActionVisible,
           setRowAction: setRowAction,
+          archiveLastOn: archiveLastOn,
+          setArchiveLast: setArchiveLast,
+          tagFootRank: tagFootRank,
+          canonicalName: canonicalName,
+          ARCHIVE: ARCHIVE,
+          LEGACY_ARCHIVE: LEGACY_ARCHIVE,
           hoursLabel: hoursLabel,
           pickAutoColor: pickAutoColor,
           setTagColor: setTagColor,

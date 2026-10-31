@@ -1,8 +1,8 @@
 # `@local/session-tag-lite` — 会话标签（轻量，不接管侧栏）
 
-给会话打标签的前端插件，形态参考 typeai WebUI 的「添加标签」：固定 `待办 / 归档` 语义、自由标签 + 全库标签池、截止日期，并在浮层面板里按标签浏览会话。
+给会话打标签的前端插件，形态参考 typeai WebUI 的「添加标签」：固定 `待办 / 存档` 语义、自由标签 + 全库标签池、截止日期，并在浮层面板里按标签浏览会话。
 
-**左侧会话列表原样保留**——只占用宿主开放的座位（行尾按钮、`…` 菜单项、悬停卡片、浮层、顶部面板列表），不 shadow `sidebar.workspaces`。标签由 **Host 半区持久化**到 `~/.dsh/session-tag-lite/state.json`，浏览器 localStorage 只作即时渲染的缓存：换浏览器、清站点数据都不丢。
+**左侧会话列表原样保留**——只占用宿主开放的座位（行尾按钮、`…` 菜单项、悬停卡片、浮层、顶部面板列表），不 shadow `sidebar.workspaces`；唯一例外是单列表里的**纯 CSS 置底**（见下文「存档标签置底」）。标签由 **Host 半区持久化**到 `~/.dsh/session-tag-lite/state.json`，浏览器 localStorage 只作即时渲染的缓存：换浏览器、清站点数据都不丢。
 
 ---
 
@@ -22,9 +22,17 @@
 
 ## 通用设置行
 
-「设置 → 通用设置」里有一行 **会话行尾标签按钮**（标 `模组`，`data-plugin-setting="session-tag-lite.row-action"`，座位 `settings.general.item`，order 15），开关落在同一份 `options.rowAction` 上：本地即时生效，并随整份状态推到 Host（`state.json`），换浏览器也保持。
+「设置 → 通用设置」里有两行，都标 `模组`、都走 `settings.general.item`：
 
-- 关掉只影响**行尾色盘**这一个座位：`…` 菜单的「编辑标签」、悬停卡片、`sidebar.panellist` 入口、标签总览面板全都不受影响。
+| 行 | `data-plugin-setting` | order | 开关 |
+| :--- | :--- | :--- | :--- |
+| **会话行尾标签按钮** | `session-tag-lite.row-action` | 15 | `options.rowAction` |
+| **存档标签置底** | `session-tag-lite.archive-last` | 16 | `options.archiveLast` |
+
+两个开关都本地即时生效，并随整份状态推到 Host（`state.json`），换浏览器也保持。
+
+- 关掉行尾开关只影响**行尾色盘**这一个座位：`…` 菜单的「编辑标签」、悬停卡片、`sidebar.panellist` 入口、标签总览面板全都不受影响。
+- 关掉「存档置底」只是移除 `order:1` 与 `display:flex`，左栏恢复宿主原来的块级顺序，不打标签的能力不变。
 - 只管本插件自己的座位。宿主的「归档 / 置顶 / ⋯ 菜单」不碰——按 `aria-label` 做 CSS 定向隐藏会在宿主改结构或文案时静默失效，不做。
 - 视觉与宿主 / 其他模组的设置行同构（徽章 + 描述 + 36×20 开关，令牌取 `--dsw-alias-*`）。
 
@@ -35,7 +43,7 @@
 - **树形（默认）**：最近分区 + 标签组，组头可折叠（下面这张图）。
 - **标签页**：把同一批分区变成顶部 tab，点击切换下方会话列表；tab 超过一行时**自动换行成多行**（VSCode wrap-tabs 行为），超过 150px 高才在 tab 栏内滚动。
 - 视图选择存 `options.panelView`（localStorage + `state.json`），关闭面板、刷新、换浏览器都记住；旧数据/脏值缺省树形。**只记忆视图，不记忆当前 tab**，每次打开默认第一个（通常是「最近」）。
-- 标签页的 tab 顺序与树形组一致（最近 → 待办 → 归档 → 自定义标签 → 未打标）；浏览态保留空的「待办 / 归档」tab 骨架，空 tab 显示「这个标签下还没有会话」。搜索时只保留有命中的 tab，当前 tab 被过滤掉时回落到第一个；支持 `←` / `→` / `Home` / `End` 键盘切换。
+- 标签页的 tab 顺序与树形组一致（最近 → 待办 → 存档 → 自定义标签 → 未打标）；浏览态保留空的「待办 / 存档」tab 骨架，空 tab 显示「这个标签下还没有会话」。搜索时只保留有命中的 tab，当前 tab 被过滤掉时回落到第一个；支持 `←` / `→` / `Home` / `End` 键盘切换。
 
 ```
 会话标签                        [树形 | 标签页]  [最近 24 ▾]  ×
@@ -46,12 +54,12 @@
 ▾ ● 待办        2      ← 组头：底色条 + 字重 600 + 计数 pill
    ├ 面试问答      32分钟   ← 行尾相对时间（与左栏同款），hover 让位给 +
    └ 为 typeai 添加…  1小时
-▸ ○ 归档        0      ← 保留组始终显示，空组也留骨架
+▸ ○ 存档        0      ← 保留组始终显示，空组也留骨架
 ▸ ● 读书        5
 ▸ ○ 未打标      225    ← 默认折叠；展开先露 15 条 +「显示全部 225 个」
 
 标签页：
-[🕐 最近 24 小时 18] [● 待办 2] [○ 归档 0] [● 读书 5] [○ 未打标 225]
+[🕐 最近 24 小时 18] [● 待办 2] [○ 存档 0] [● 读书 5] [○ 未打标 225]
 [ 会话行（同一套行结构，无组头缩进）… ]
 ```
 
@@ -59,11 +67,11 @@
 - 组头与会话行是**两级视觉**：组头 32px / 13px / 600 字重 / `bg-layer-2` 底；会话行 30px / 13px / secondary，hover 才升 primary。
 - 会话行右侧**常显相对时间**：`刚刚 / N分钟 / N小时 / N天 / N个月 / N年`（与宿主左栏同一套分桶），鼠标移到行上时时间淡出、`+` 打标签按钮出现在同一位置——和左栏“hover 时时间让位给动作按钮”的手感一致。
 - 子项缩进 13px + 1px 引导线（`--dsw-alias-border-l1`），和组头形成明确父子关系。
-- `待办 / 归档` 在浏览态**始终存在**（哪怕 0 项），避免空组消失导致「看起来只剩两组」。
+- `待办 / 存档` 在浏览态**始终存在**（哪怕 0 项），避免空组消失导致「看起来只剩两组」。
 - `未打标` 默认折叠；点开后最多先显示最近 15 条，底部「显示全部 N 个」展开。搜索态下该组强制展开且显示全部命中。
 - 搜索态只显示有命中的组，不出现一堆 0 计数。
 - 点任一会话行 → 打开该会话并关闭面板。
-- **宿主已归档的会话不上架**：归档集来自 `ctx.workspaces.list` 的 `archivedSessionIds`，与左栏「隐藏已归档」保持一致。归档行不在左栏里，`openSession` 也进不去——宿主会把主面板清成空白，列在这里只会变成「点一下就空」的陷阱。插件自己的「归档」标签是另一回事（那是你手动贴的语义标签）。
+- **宿主已归档的会话不上架**：归档集来自 `ctx.workspaces.list` 的 `archivedSessionIds`，与左栏「隐藏已归档」保持一致。归档行不在左栏里，`openSession` 也进不去——宿主会把主面板清成空白，列在这里只会变成「点一下就空」的陷阱。插件自己的「存档」标签是另一回事（那是你手动贴的语义标签）。
 
 ## 「最近 N 小时」（时间维度，不是标签）
 
@@ -77,23 +85,41 @@
 - 与标签正交：同一会话既在「最近」又在「待办」里，两处各出现一次；在「最近」行上打的标签立即反映到标签组。
 - 它治的是「未打标 221 条太长」：时间窗口会自己收敛，24 小时内通常只有十几条。
 
+## 存档标签置底（左栏单列表排序，第一期）
+
+左栏切到「单列表」时，打了 `存档` 标签的会话排到列表最后；其他会话保持宿主自己的顺序（最近更新 / 手动排序都不变）。「按工作区」「按工作区树」不受影响。
+
+- 只做**视觉排序**：给单列表容器加一个插件类（`display:flex`），再给「存档」行的包装加 `data-stl-foot`，CSS `order:1` 把它推到最后。不写宿主的手动排序顺序、不动 DOM 顺序、不改宿主偏好。
+- 为什么不用 DOM 重排：宿主用 keyed children 渲染，插件移动节点会被下一次 commit 复原；`order` 是纯展示层，宿主切视图 / 刷新 / 标签变化后都能自动重建。
+- 标签一变、列表重渲染、切回单列表，`MutationObserver` 会重新标记；插件只观察 `childList`，自己写属性不会自喂。
+- 开关在「设置 → 通用设置 → 存档标签置底」（默认开，`options.archiveLast`，随 `state.json` 跨浏览器）。
+- 扩展点：`TAG_FOOT_ORDER` 数组决定置底优先级，后续加多个标签改这一处即可（CSS 目前只实现一档 `order:1`）。
+
+### 已知代价
+
+- **视觉顺序与 DOM 顺序不一致**：键盘上下移动、拖拽落点仍按宿主的真实顺序走；拖拽后可能「看着放这里、实际存那里」。需要精确拖拽时先关掉这个开关。
+- **「置顶」压不住**：置顶行的 `存档` 仍会排到最后（置顶与标签序暂时没有合并规则）。
+- 依赖宿主的 `_flatList` 类名后缀识别单列表；宿主改名时排序会静默失效，但不会破坏布局（分组视图不会被加 flex）。
+
 ## 数据模型
 
 ```js
 // localStorage["session-tag-lite.v1"]
 { version: 1,
-  tags: ['待办', '归档', '读书'],        // 全库标签池；保留名永远在最前
+  tags: ['待办', '存档', '读书'],        // 全库标签池；保留名永远在最前
   marks: { '<sessionId>': ['待办', '读书'] },
   due:   { '<sessionId>': '2026-11-01' },  // 严格 YYYY-MM-DD，脏值读取时丢弃
   collapsed: { '待办': true, '__untagged__': false },  // true=折叠，false=显式展开
   colors: { '读书': '#7fc4bd' },           // 自定义标签的颜色；缺省回退名字哈希
-  options: { recentHours: 24, rowAction: true, panelView: 'tree' } }
+  options: { recentHours: 24, rowAction: true, panelView: 'tree', archiveLast: true } }
                 // 「最近」窗口 1–720（脏值回落 24）+ 行尾色盘开关（缺省 true）
                 // + 面板视图：'tree'（默认）| 'tabs'，脏值回落 'tree'
+                // + 存档置底：缺省 true，只有显式 false 才关闭
 ```
 
 - 标签名读取时 trim、截断到 24 字符、去重；`marks` 引用到的名字自动回填标签池。
-- **孤儿标签自动清理**：池里已无任何会话使用、且不是 `待办/归档` 的名字，在下次写入时消失（typeai 也没有"删除标签"界面）。
+- **旧保留名迁移**：早期版本把保留名写作 `归档`，读入时在标签池、`marks`、`collapsed` 三处统一迁移成 `存档`；用户输入 `归档` 也等同输入 `存档`，避免池里出现两个近义保留名。
+- **孤儿标签自动清理**：池里已无任何会话使用、且不是 `待办/存档` 的名字，在下次写入时消失（typeai 也没有"删除标签"界面）。
 - 同一份数据也由 Host 落盘（见下节），localStorage 是它的本地镜像。
 
 ## 持久化（跨浏览器）
@@ -102,7 +128,7 @@ Host 半区注册一条同源路由，读写 `$DSH_HOME/session-tag-lite/state.j
 
 | 请求 | 行为 |
 | :--- | :--- |
-| `GET /plugins/session-tag-lite/state` | `{ ok, revision, data }`；无存档时 `data: null` |
+| `GET /plugins/session-tag-lite/state` | `{ ok, revision, data }`；无落盘数据时 `data: null` |
 | `PUT /plugins/session-tag-lite/state` | body `{ data }`，持久化后返回 `{ ok, revision }` |
 
 两条请求都必须带 `x-session-tag-lite: 1` 头（跨站表单拼不出来），且只接受同源 `Origin`。
@@ -120,7 +146,7 @@ Client 的同步策略是**本地优先**：
 
 ## 颜色
 
-- `待办` = 琥珀 `#d9a441`，`归档` = 灰 `#9a9ca0`，固定不可改。
+- `待办` = 琥珀 `#d9a441`，`存档` = 灰 `#9a9ca0`，固定不可改。
 - 其余 7 色环：雾蓝 / 灰绿 / 藕紫 / 陶红 / 青碧 / 沙棕 / 蓝紫灰。
 - **新建标签自动选色**：优先完全没被用过的颜色，其次用得最少的（并列取环内靠前），所以连着建三个标签不会撞色。
 - **改色**：编辑器里点标签 pill 上的小色点 → 展开 7 色板 → 选一个；改的是该标签的全局颜色，行尾色盘立即跟着变。
@@ -138,23 +164,25 @@ Client 的同步策略是**本地优先**：
 - tab 栏超过一行自动换行，最高 150px，再多就在栏内纵向滚动；不做横向滚动与折叠成“更多”菜单。
 - 标签页视图一次渲染当前 tab 的全部行（与树形单组一致），未打标仍保留 15 条预览；会话数上千前没做虚拟化。
 - 面板打开时宿主会话行被虚拟列表卸载也不影响：所有读写只按 `sessionId`，不持有 DOM。
+- 「存档置底」是视觉排序，键盘遍历 / 拖拽落点仍按宿主真实顺序，详见上文「已知代价」。
 
 ## 回归测试
 
 ```powershell
 cd D:\Users\dsh-local-plugins\session-tag-lite
-node self-test.mjs        # 69 项零依赖用例
+node self-test.mjs        # 76 项零依赖用例
 node --check client.js    # 语法
 ```
 
-覆盖：存储规范化与脏数据兜底、孤儿标签清理、保留名保护、mark 自愈、标签读写、`isCollapsed` 默认折叠语义、取色（固定语义色 / 显式颜色优先 / 非法色回退哈希）、新建标签自动配色、`setTagColor` 落盘与保留名不可改、`colors` 只保留池内合法值、截止文案与过期判定、**相对时间分桶（刚刚 / 分钟 / 小时 / 天 / 月 / 年与整点边界、缺失时间戳返回空串）**、面板模型（跳过 blank / 子代理 / 缺失 id、**跳过宿主已归档会话**、保留组骨架、搜索态过滤、标题与标签名命中、组内倒序）、**`archivedIdsOf` 快照形状兜底**、**菜单文案（动词短语、无省略号）**、**行尾色盘开关（缺省显示 / 只有显式 false 才隐藏 / 落盘 / 幂等 / 不覆盖「最近」窗口 / 随远端恢复读入）**、**「最近 N 小时」窗口（按 `updatedAt` 过滤、运行中强制纳入、窗口放大后纳入更早会话、空窗口不出现分区、分区名与时钟图标）**、**`options.recentHours` 规范化（合法值保留 / 脏值回落 24 / `setRecentHours` 落盘与越界不提交 / `hoursLabel` 天与小时文案）**、**面板视图（缺省树形 / `'tabs'` 保留 / 脏值回落 / `setPanelView` 落盘幂等且不覆盖其他选项 / 非法值归一 / 随远端恢复读入）**、订阅通知、localStorage 抛错退化。DOM / React 座位交互不在测试范围内。
+覆盖：存储规范化与脏数据兜底、**旧保留名 `归档` → `存档` 迁移（池 / marks / collapsed / 输入归一 / 新旧键并存）**、孤儿标签清理、保留名保护、mark 自愈、标签读写、`isCollapsed` 默认折叠语义、取色（固定语义色 / 显式颜色优先 / 非法色回退哈希）、新建标签自动配色、`setTagColor` 落盘与保留名不可改、`colors` 只保留池内合法值、截止文案与过期判定、**相对时间分桶（刚刚 / 分钟 / 小时 / 天 / 月 / 年与整点边界、缺失时间戳返回空串）**、面板模型（跳过 blank / 子代理 / 缺失 id、**跳过宿主已归档会话**、保留组骨架、搜索态过滤、标题与标签名命中、组内倒序）、**`archivedIdsOf` 快照形状兜底**、**菜单文案（动词短语、无省略号）**、**行尾色盘开关（缺省显示 / 只有显式 false 才隐藏 / 落盘 / 幂等 / 不覆盖「最近」窗口 / 随远端恢复读入）**、**`options.archiveLast`（缺省开启 / 脏值回落 / 落盘幂等 / 不覆盖其他选项）与 `tagFootRank` 权重**、**「最近 N 小时」窗口（按 `updatedAt` 过滤、运行中强制纳入、窗口放大后纳入更早会话、空窗口不出现分区、分区名与时钟图标）**、**`options.recentHours` 规范化（合法值保留 / 脏值回落 24 / `setRecentHours` 落盘与越界不提交 / `hoursLabel` 天与小时文案）**、**面板视图（缺省树形 / `'tabs'` 保留 / 脏值回落 / `setPanelView` 落盘幂等且不覆盖其他选项 / 非法值归一 / 随远端恢复读入）**、订阅通知、localStorage 抛错退化。DOM / React 座位交互不在测试范围内。
 
 ## 宿主契约依赖
 
-- `ctx.slots.inject/register`：`sidebar.workspaces.session.row.action`、`sidebar.workspaces.session.menu.item`、`sidebar.session.row.hover`、`settings.general.item`、`shell.overlay`×2、`sidebar.panellist`、`main`（**不注册** `sidebar.session.row.leading`）。
+- `ctx.slots.inject/register`：`sidebar.workspaces.session.row.action`、`sidebar.workspaces.session.menu.item`、`sidebar.session.row.hover`、`settings.general.item`×2、`shell.overlay`×2、`sidebar.panellist`、`main`（**不注册** `sidebar.session.row.leading`）。
 - `ctx.sessions.list`（`SnapshotStore<SessionListState>`）：只读会话快照，读取不激活任何 Session。
 - `ctx.workspaces.list`（`WorkspaceSource`）：只读 Workspace 快照，取 `archivedSessionIds` 过滤宿主已归档会话；服务缺失时退回「不过滤」。
 - `ctx.uiWorkspace.openSession(id)`：从面板打开会话。
 - `ctx.layout.selectPanel(null)`：`main` 兜底重定向（防止键盘把主面板切到空白键位）。
 - Host 半区 `inject: ['webServer']` + `ctx.webServer.register({ kind: 'exact', path: '/plugins/session-tag-lite/state' })`；`webServer` 不存在时插件不激活，Client 自动退回 localStorage。
-- 颜色只用 `--dsw-alias-*` token + `color-mix`；不依赖宿主 CSS Module 类名，不写 `data-*`。
+- 左栏排序只依赖单列表容器的 `_flatList` 类名后缀与行上的 `data-row-key="session:<id>"`（宿主行本来就有的属性）；匹配不上时排序静默不启用。插件自己写在行包装上的 `data-stl-foot` 只用于 CSS `order`。
+- 颜色只用 `--dsw-alias-*` token + `color-mix`；除上面的排序标记外不改宿主 `data-*`。

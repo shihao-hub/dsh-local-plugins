@@ -86,8 +86,8 @@ const sessionsFixture = {
 };
 
 const tagState = {
-  tags: ['待办', '归档', '读书'],
-  marks: { s1: ['待办'], s2: ['读书'], s3: ['归档', '读书'] },
+  tags: ['待办', '存档', '读书'],
+  marks: { s1: ['待办'], s2: ['读书'], s3: ['存档', '读书'] },
   due: { s2: '2020-01-01' },
   collapsed: {}
 };
@@ -100,27 +100,27 @@ test('空输入只给出保留名', () => {
   const { test: t } = loadPlugin(memoryStorage());
   assert.deepEqual(t.normalizeData(null), {
     version: 1,
-    tags: ['待办', '归档'],
+    tags: ['待办', '存档'],
     marks: {},
     due: {},
     collapsed: {},
     colors: {},
-    options: { recentHours: 24, rowAction: true, panelView: 'tree' }
+    options: { recentHours: 24, rowAction: true, panelView: 'tree', archiveLast: true }
   });
-  assert.deepEqual(t.normalizeData('x').tags, ['待办', '归档']);
+  assert.deepEqual(t.normalizeData('x').tags, ['待办', '存档']);
 });
 
 test('保留名始终排在池首，且不重复', () => {
   const { test: t } = loadPlugin(memoryStorage());
   const out = t.normalizeData({ tags: ['工作', '待办'], marks: { s1: ['工作', '待办'] } });
-  assert.deepEqual(out.tags, ['待办', '归档', '工作']);
+  assert.deepEqual(out.tags, ['待办', '存档', '工作']);
 });
 
 test('脏标签被丢弃、超长被截断、重复去重', () => {
   const { test: t } = loadPlugin(memoryStorage());
   const long = 'x'.repeat(40);
   const out = t.normalizeData({ tags: ['', '  ', long, long], marks: { s1: [long, '同一个', '同一个'] } });
-  assert.equal(out.tags.length, 4, '待办 + 归档 + 截断后的长名 + 同一个');
+  assert.equal(out.tags.length, 4, '待办 + 存档 + 截断后的长名 + 同一个');
   assert.equal(out.tags[2].length, 24);
   assert.deepEqual(out.marks.s1, [long.slice(0, 24), '同一个']);
 });
@@ -128,7 +128,7 @@ test('脏标签被丢弃、超长被截断、重复去重', () => {
 test('marks 引用到的名字回填到池里', () => {
   const { test: t } = loadPlugin(memoryStorage());
   const out = t.normalizeData({ tags: [], marks: { s1: ['读书'] } });
-  assert.deepEqual(out.tags, ['待办', '归档', '读书']);
+  assert.deepEqual(out.tags, ['待办', '存档', '读书']);
 });
 
 test('空的 marks 条目被删除', () => {
@@ -140,7 +140,7 @@ test('空的 marks 条目被删除', () => {
 test('池里已无任何会话使用的标签被清理', () => {
   const { test: t } = loadPlugin(memoryStorage());
   const out = t.normalizeData({ tags: ['读书', '工作'], marks: { s1: ['读书'] } });
-  assert.deepEqual(out.tags, ['待办', '归档', '读书']);
+  assert.deepEqual(out.tags, ['待办', '存档', '读书']);
 });
 
 test('due 只接受 YYYY-MM-DD', () => {
@@ -170,12 +170,12 @@ console.log('loadData');
 
 test('没有存档时给出空状态', () => {
   const { test: t } = loadPlugin(memoryStorage());
-  assert.deepEqual(t.loadData().tags, ['待办', '归档']);
+  assert.deepEqual(t.loadData().tags, ['待办', '存档']);
 });
 
 test('损坏的 JSON 不抛错', () => {
   const { test: t } = loadPlugin(memoryStorage({ 'session-tag-lite.v1': '{not json' }));
-  assert.deepEqual(t.loadData().tags, ['待办', '归档']);
+  assert.deepEqual(t.loadData().tags, ['待办', '存档']);
 });
 
 test('解析存档并规范化', () => {
@@ -186,7 +186,7 @@ test('解析存档并规范化', () => {
   });
   const { test: t } = loadPlugin(memoryStorage({ 'session-tag-lite.v1': stored }));
   const out = t.loadData();
-  assert.deepEqual(out.tags, ['待办', '归档', '读书']);
+  assert.deepEqual(out.tags, ['待办', '存档', '读书']);
   assert.deepEqual(out.marks, { s1: ['读书'] });
   assert.deepEqual(out.due, { s1: '2026-05-01' });
 });
@@ -199,10 +199,10 @@ test('工厂初始化时就读取存档', () => {
 
 console.log('colorOf');
 
-test('待办 / 归档用固定语义色', () => {
+test('待办 / 存档用固定语义色', () => {
   const { test: t } = loadPlugin(memoryStorage());
   assert.equal(t.colorOf({}, '待办'), '#d9a441');
-  assert.equal(t.colorOf({}, '归档'), '#9a9ca0');
+  assert.equal(t.colorOf({}, '存档'), '#9a9ca0');
 });
 
 test('没有显式颜色时回退哈希，且落在 7 色环里', () => {
@@ -258,14 +258,14 @@ test('tagsOf 返回副本，改不到原状态', () => {
   const { test: t } = loadPlugin(memoryStorage());
   const names = t.tagsOf(tagState, 's3');
   names.push('污染');
-  assert.deepEqual(t.tagsOf(tagState, 's3'), ['归档', '读书']);
+  assert.deepEqual(t.tagsOf(tagState, 's3'), ['存档', '读书']);
 });
 
 test('orderedPool：保留名在前，其余字典序', () => {
   const { test: t } = loadPlugin(memoryStorage());
-  assert.deepEqual(t.orderedPool({ tags: ['待办', '归档', 'beta', 'alpha'] }), [
+  assert.deepEqual(t.orderedPool({ tags: ['待办', '存档', 'beta', 'alpha'] }), [
     '待办',
-    '归档',
+    '存档',
     'alpha',
     'beta'
   ]);
@@ -304,14 +304,14 @@ test('移除最后一个引用后空 marks 与孤儿标签都被清理', () => {
   t.addSessionTag('s1', '读书');
   t.removeSessionTag('s1', '读书');
   assert.deepEqual(t.getData().marks, {});
-  assert.deepEqual(t.getData().tags, ['待办', '归档']);
+  assert.deepEqual(t.getData().tags, ['待办', '存档']);
 });
 
 test('保留名即使无人使用也留在池里', () => {
   const { test: t } = loadPlugin(memoryStorage());
   t.addSessionTag('s1', '待办');
   t.removeSessionTag('s1', '待办');
-  assert.deepEqual(t.getData().tags, ['待办', '归档']);
+  assert.deepEqual(t.getData().tags, ['待办', '存档']);
 });
 
 test('toggleSessionTag 往返', () => {
@@ -429,12 +429,12 @@ test('跳过空白会话、子代理会话与快照里缺失的 id', () => {
   }
 });
 
-test('待办 / 归档 / 自定义标签 / 未打标分组', () => {
+test('待办 / 存档 / 自定义标签 / 未打标分组', () => {
   const { test: t } = loadPlugin(memoryStorage());
   const model = t.buildPanelModel(tagState, sessionsFixture, '');
   assert.deepEqual(
     model.groups.map((group) => group.key),
-    [t.RECENT_KEY, '待办', '归档', '读书'],
+    [t.RECENT_KEY, '待办', '存档', '读书'],
     's2 处于运行中，因此也进了「最近」分区'
   );
   const reading = model.groups.find((group) => group.name === '读书');
@@ -443,11 +443,11 @@ test('待办 / 归档 / 自定义标签 / 未打标分组', () => {
 
 test('无标签会话落入「未打标」组，保留组头始终在', () => {
   const { test: t } = loadPlugin(memoryStorage());
-  const state = { tags: ['待办', '归档'], marks: {}, due: {}, collapsed: {} };
+  const state = { tags: ['待办', '存档'], marks: {}, due: {}, collapsed: {} };
   const model = t.buildPanelModel(state, sessionsFixture, '');
   assert.deepEqual(
     model.groups.map((group) => group.key),
-    [t.RECENT_KEY, '待办', '归档', t.UNTAGGED_KEY]
+    [t.RECENT_KEY, '待办', '存档', t.UNTAGGED_KEY]
   );
   assert.equal(model.groups[2].rows.length, 0, '归档空组仍保留组头，分类骨架稳定');
   assert.equal(model.groups[3].rows.length, 3);
@@ -492,7 +492,7 @@ test('面板行带出截止日期与运行态', () => {
   assert.equal(row.running, true);
 });
 
-console.log('归档过滤');
+console.log('宿主归档过滤');
 
 test('宿主已归档的会话不进面板（不在最近、也不在标签组）', () => {
   const { test: t } = loadPlugin(memoryStorage());
@@ -522,7 +522,7 @@ test('归档过滤不改变未归档会话的分组与计数', () => {
     }));
   assert.deepEqual(normalize(after), normalize(before));
   assert.equal(
-    after.groups.find((group) => group.key === '归档').rows.length,
+    after.groups.find((group) => group.key === '存档').rows.length,
     0,
     '归档组骨架仍在，但内容被清空'
   );
@@ -602,7 +602,7 @@ const staleSessionsFixture = {
 };
 
 const recentState = (hours) => ({
-  tags: ['待办', '归档'],
+  tags: ['待办', '存档'],
   marks: {},
   due: {},
   collapsed: {},
@@ -638,7 +638,7 @@ test('窗口内没有会话时不出现「最近」分区', () => {
   );
   assert.deepEqual(
     model.groups.map((group) => group.key),
-    ['待办', '归档', t.UNTAGGED_KEY]
+    ['待办', '存档', t.UNTAGGED_KEY]
   );
 });
 
@@ -798,6 +798,91 @@ test('开关状态随远端恢复一起读入', () => {
   const restored = t.normalizeData({ options: { recentHours: 24, rowAction: false }, marks: { s1: ['待办'] } });
   assert.equal(t.rowActionVisible(restored), false);
   assert.deepEqual(restored.marks.s1, ['待办'], '规范化不丢标签数据');
+});
+
+console.log('存档置底（标签序排序）');
+
+test('缺省开启；只有显式 false 才关闭', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  assert.equal(t.archiveLastOn(t.normalizeData(null)), true);
+  assert.equal(t.archiveLastOn(t.normalizeData({ options: {} })), true);
+  assert.equal(t.archiveLastOn(t.normalizeData({ options: { archiveLast: false } })), false);
+  assert.equal(t.archiveLastOn(t.normalizeData({ options: { archiveLast: true } })), true);
+  assert.equal(t.archiveLastOn(t.normalizeData({ options: { archiveLast: 'no' } })), true, '脏值回落开启');
+  assert.equal(t.archiveLastOn(null), true);
+  assert.equal(t.archiveLastOn(undefined), true);
+  assert.equal(t.archiveLastOn({}), true);
+});
+
+test('setArchiveLast 落盘、幂等、不覆盖其他选项', () => {
+  const storage = memoryStorage();
+  const { test: t } = loadPlugin(storage);
+  t.setRecentHours(48);
+  t.setRowAction(false);
+  let notified = 0;
+  const off = t.subscribe(function () {
+    notified += 1;
+  });
+
+  t.setArchiveLast(false);
+  assert.equal(t.archiveLastOn(t.getData()), false);
+  assert.equal(notified, 1);
+  const saved = JSON.parse(storage.read(t.STORAGE_KEY));
+  assert.equal(saved.options.archiveLast, false);
+  assert.equal(saved.options.recentHours, 48, '置底开关不覆盖「最近」窗口');
+  assert.equal(saved.options.rowAction, false, '置底开关不覆盖行尾开关');
+
+  t.setArchiveLast(false);
+  assert.equal(notified, 1, '同值不产生提交');
+
+  t.setArchiveLast(true);
+  assert.equal(t.archiveLastOn(t.getData()), true);
+  assert.equal(notified, 2);
+  off();
+});
+
+test('tagFootRank：命中「存档」为 1，其余为 0', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  assert.equal(t.tagFootRank([]), 0);
+  assert.equal(t.tagFootRank(['读书']), 0);
+  assert.equal(t.tagFootRank(['待办']), 0);
+  assert.equal(t.tagFootRank(['存档']), 1);
+  assert.equal(t.tagFootRank(['待办', '存档']), 1);
+  assert.equal(t.tagFootRank(['存档', '读书']), 1);
+});
+
+console.log('旧保留名迁移（归档 → 存档）');
+
+test('旧的「归档」在池、marks、collapsed 三处都迁移成「存档」', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const out = t.normalizeData({
+    tags: ['待办', '归档', '读书'],
+    marks: { s1: ['归档'], s2: ['归档', '读书'] },
+    collapsed: { 归档: true }
+  });
+  assert.deepEqual(out.tags, ['待办', '存档', '读书']);
+  assert.deepEqual(out.marks.s1, ['存档']);
+  assert.deepEqual(out.marks.s2, ['存档', '读书']);
+  assert.deepEqual(out.collapsed, { 存档: true });
+});
+
+test('新旧键同时存在时以新键为准', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const out = t.normalizeData({ collapsed: { 归档: true, 存档: false } });
+  assert.deepEqual(out.collapsed, { 存档: false });
+});
+
+test('旧名已经没有任何引用时不会重新出现在池里', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const out = t.normalizeData({ tags: ['归档'], marks: { s1: ['读书'] } });
+  assert.deepEqual(out.tags, ['待办', '存档', '读书']);
+});
+
+test('用户输入「归档」等同输入「存档」', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  t.addSessionTag('s1', '归档');
+  assert.deepEqual(t.tagsOf(t.getData(), 's1'), ['存档']);
+  assert.deepEqual(t.getData().tags, ['待办', '存档']);
 });
 
 console.log('store');
