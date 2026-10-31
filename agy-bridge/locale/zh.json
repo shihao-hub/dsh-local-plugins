@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "agy 只读调研桥",
+    "description": "把宿主机上的 Antigravity CLI 以 MCP stdio 服务接入 DSH，让调研、代码审计、Bug 诊断类任务只读委托给 agy。"
+  }
+}

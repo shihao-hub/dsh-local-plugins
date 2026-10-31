@@ -6,6 +6,7 @@
   "description": "Read-only Antigravity (agy) research delegation bridge for DeepSeek Harness: an MCP stdio server wrapping `agy -p ... --sandbox --mode plan --output-format json`.",
   "exports": {
     ".": "./package.json",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
@@ -14,6 +15,7 @@
     "server/agy_bridge_server.py",
     "server/win_job.py",
     "cordis.patch.yml",
+    "locale/*.json",
     "cordis.patch.resolved.yml",
     "README.md"
   ],

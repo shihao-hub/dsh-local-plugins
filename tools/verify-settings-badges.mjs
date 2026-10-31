@@ -29,7 +29,9 @@ const ROWS = [
   { plugin: 'active-session-highlight', rowId: 'active-session-highlight', badgeClass: 'ash_badge', dictPrefix: 'row' },
   { plugin: 'running-session-highlight', rowId: 'running-session-highlight', badgeClass: 'rsh_badge', dictPrefix: 'row' },
   { plugin: 'rider-theme', rowId: 'rider-theme', badgeClass: 'rdt_badge', dictPrefix: 'row' },
-  { plugin: 'model-favorites', rowId: 'model-favorites-status', badgeClass: 'mfs_badge', dictPrefix: 'settings' }
+  { plugin: 'model-favorites', rowId: 'model-favorites-status', badgeClass: 'mfs_badge', dictPrefix: 'settings' },
+  { plugin: 'rightbar-width', rowId: 'rightbar-width', badgeClass: 'rbw_badge', dictPrefix: 'row' },
+  { plugin: 'session-tag-lite', rowId: 'session-tag-lite', badgeClass: 'stl_setBadge', dictPrefix: 'row' }
 ];
 
 let checks = 0;

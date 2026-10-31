@@ -7,12 +7,14 @@
   "icon": "./icon.svg",
   "exports": {
     ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
     "helper.cs",
     "cordis.patch.yml",
+    "locale/*.json",
     "icon.svg",
     "README.md"
   ],

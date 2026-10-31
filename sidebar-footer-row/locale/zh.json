@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "侧栏底部单行",
+    "description": "把侧栏底部 footer 从两行改回一行：Remote 靠左，重启/退出图标靠右；纯 CSS 覆盖列的强制布局。"
+  }
+}

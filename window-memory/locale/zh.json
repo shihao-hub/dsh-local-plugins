@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "窗口位置记忆",
+    "description": "记住 DeepSeek Harness 桌面主窗口的大小与位置，下次启动自动恢复。"
+  }
+}

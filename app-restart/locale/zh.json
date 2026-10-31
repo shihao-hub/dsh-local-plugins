@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "应用重启按钮",
+    "description": "在侧栏底部加一个重启按钮，连同 Host 运行时一起重启 DeepSeek Harness 桌面端。"
+  }
+}
