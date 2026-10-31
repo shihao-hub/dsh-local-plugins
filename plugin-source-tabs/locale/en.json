@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Plugin Source Tabs",
+    "description": "Splits installed plugins into Local and Downloaded tabs, opening on Local by default."
+  }
+}

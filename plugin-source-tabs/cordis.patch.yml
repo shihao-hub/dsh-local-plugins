@@ -1,0 +1,3 @@
+- insert:
+    - id: plugin-source-tabs
+      name: '@local/plugin-source-tabs'
