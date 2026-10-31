@@ -1,0 +1,3 @@
+- insert:
+    - id: panellist-reorder
+      name: '@local/panellist-reorder'
