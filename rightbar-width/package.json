@@ -1,0 +1,32 @@
+{
+  "name": "@local/rightbar-width",
+  "version": "1.0.0",
+  "private": true,
+  "icon": "./icon.svg",
+  "type": "module",
+  "description": "Remembers the DSH Web left sidebar and right panel widths: the host keeps both transient (the sidebar resets to 280, the right panel to 45% of the viewport). This plugin restores the saved px on boot, records widths after a splitter drag, and adds a general-settings row with presets, custom px fields and resets for each side.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "self-test.mjs",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

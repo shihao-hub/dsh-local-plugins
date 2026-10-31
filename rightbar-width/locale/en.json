@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Sidebar width memory",
+    "description": "Remembers both panel widths: the left sidebar (264–420px, host default 280) and the right panel (480px default). Restored on boot, saved after dragging, with presets, custom px and reset in settings."
+  }
+}

@@ -1,0 +1,3 @@
+- insert:
+    - id: rightbar-width
+      name: '@local/rightbar-width'
