@@ -58,3 +58,17 @@ Start-Sleep -Milliseconds 800
 - 只杀浏览器进程组；**不要**杀 `chrome-devtools-mcp` 的 node server（父进程是 `dsh web`，随宿主生命周期，关掉它等于废掉 MCP 工具）。
 - 收尾后在回复里带一句结果，例如：`MCP 浏览器已关闭：残留 chrome 进程 0`。
 - 验收清单的最后一项固定写「关闭浏览器」，避免「代码写完就忘」。`list_pages` 只剩 `about:blank` 不代表可以留着——那个空页就是它拉起的。
+
+---
+
+## 插件显示名元数据（新建 / 重写插件时，硬性）
+
+设置页的插件标题取 `meta.title ?? 包名`。新增插件或重写 `package.json` 时**必须同时补齐 locale 元数据**，否则设置页显示 `@local/xxx`，且全程不报错（静默回退，2026-10 补 21 个插件时踩过）：
+
+- `locale/en.json`：`meta.title`（**入口**，缺它则 `zh.json` 也不生效）
+- `locale/zh.json`：`meta.title` + `meta.description`
+- `package.json`：`exports` 加 `"./locale/*.json"`，`files` 加 `"locale/*.json"`
+
+自检：`node tools\verify-plugin-locale.mjs`。新增 `locale/` 或改 `exports` 后需重启 `dsh web` 才生效（Node 在进程内缓存包 manifest）；只改文案刷新设置页即可。
+
+回退矩阵与示例见本仓库 [README.md](./README.md) 的「插件显示名与简介（locale 元数据）约定」小节。
