@@ -26,6 +26,15 @@ DSH 模型 ──► mcp__agy__research (MCP 工具)
 **不**携带 `--dangerously-skip-permissions`（按设计确认：先把风险面压到最低）。
 桥接器自身零写盘：不落临时文件、不写缓存、不记录 prompt。
 
+### 非交互守卫（同步工具）
+
+`agy --mode plan` 的默认行为是「先出计划、等人点 Proceed」。同步 MCP 调用没有人能点，
+所以 `tool_research` 每次都会把一段守卫段追加到 prompt 末尾，声明这是 `-p` 非交互调用、
+必须同回合给出最终交付物。若 agy 仍概率性地停下来（命中 `待确认 / 请审阅 / Proceed /
+确认无误后 / 等待您的批准`），桥接器会用同一 `conversation_id` **有界续跑一次**（硬上限 1 次），
+成功才覆盖首轮文本、失败保留原文。返回的 `structuredContent` 带 `planWait` 与
+`continuations` 两个判定字段。该守卫段与 `bin/agy-run.mjs` 同源，两条委托路径行为一致。
+
 ## 工具面（2 个）
 
 | 工具名（DSH 内完整名） | 说明 |

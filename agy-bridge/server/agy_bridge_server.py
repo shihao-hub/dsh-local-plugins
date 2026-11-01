@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -54,6 +55,28 @@ JSON_FLAG = "--output-format"
 DEFAULT_TIMEOUT_S = 600
 MAX_TIMEOUT_S = 3600
 MAX_PROMPT_CHARS = 200_000
+
+# 非交互守卫段。没有它时，agy 在 plan 模式下会把委托理解成「先出计划、等人点 Proceed」，
+# 而非交互的 print 调用根本没有人能点，结果就是返回一份计划文档而不是答案。
+# 与 bin/agy-run.mjs 的 GUARDRAILS 保持同源，避免两条委托路径行为分叉。
+GUARDRAILS = (
+    "\n"
+    "【本次调用为 -p 非交互 print 模式，没有人能点击 Proceed 或回复确认】\n"
+    "1. 必须在同一回合内直接产出最终交付物（报告正文即最终回答），禁止生成「待确认/请审阅」的计划文档；\n"
+    "2. 文件枚举优先使用 git ls-files；禁止 Path.rglob / os.walk 全盘裸扫；目录遍历必须限深、限条数；\n"
+    "3. 严禁把探针脚本托管为长时间后台任务；单条命令超过 60 秒即视为设计错误，应缩减范围；\n"
+    "4. 预算内先出完整结构，再补关键细节，不要为细枝末节反复往返。"
+)
+
+# 命中即认为 agy 停下来等人批准（非交互调用无人可点）。
+PLAN_WAIT_PATTERN = re.compile(r"(待确认|请审阅|Proceed|确认无误后|等待您的批准)")
+# 自动续跑时追加的指令。
+RESUME_PROMPT = (
+    "继续：直接在同一回合内输出最终交付物（报告正文即最终回答），"
+    "不要再征求任何批准或生成计划文档。"
+)
+# 续跑硬上限：只允许一次，避免在 agy 顽固进入 plan 模式时无限循环烧额度。
+MAX_CONTINUATIONS = 1
 
 IS_WINDOWS = os.name == "nt"
 CREATE_NO_WINDOW = 0x08000000  # Windows process creation flag, harmless elsewhere
@@ -232,6 +255,33 @@ def short_failure(meta: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# plan-and-wait detection
+# ---------------------------------------------------------------------------
+
+
+def parse_envelope(stdout: str) -> dict[str, Any]:
+    """Parse agy's ``--output-format json`` envelope; {} when unrecognised.
+
+    The envelope is flat (``conversation_id`` / ``status`` / ``response`` /
+    ``duration_seconds`` / ``num_turns`` / ``usage``), so a shallow read is
+    enough and ``conversation_id`` is directly usable for a continuation run.
+    """
+    text = (stdout or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def looks_like_plan_wait(text: str | None) -> bool:
+    """True when agy stopped to ask for approval instead of delivering."""
+    return bool(text) and PLAN_WAIT_PATTERN.search(text) is not None
+
+
+# ---------------------------------------------------------------------------
 # tool implementations
 # ---------------------------------------------------------------------------
 
@@ -278,49 +328,83 @@ def tool_research(args: dict[str, Any]) -> dict[str, Any]:
     effort = str(args.get("effort") or "").strip()
     add_dirs = _normalize_extra_args(args.get("add_dir"))
 
-    command_args = ["-p", prompt, *READ_ONLY_FLAGS, JSON_FLAG, "json"]
+    base_args = [*READ_ONLY_FLAGS, JSON_FLAG, "json"]
     if model:
-        command_args.extend(["--model", model])
+        base_args.extend(["--model", model])
     if effort:
-        command_args.extend(["--effort", effort])
+        base_args.extend(["--effort", effort])
     for directory in add_dirs:
-        command_args.extend(["--add-dir", directory])
+        base_args.extend(["--add-dir", directory])
 
+    # 守卫段随首轮 prompt 一起下发，明确告知「非交互调用没有人能点 Proceed」。
     try:
-        meta = run_agy(command_args, cwd=effective_cwd, timeout_s=timeout_s)
+        meta = run_agy(
+            ["-p", f"{prompt}\n{GUARDRAILS}", *base_args],
+            cwd=effective_cwd,
+            timeout_s=timeout_s,
+        )
     except FileNotFoundError:
         return _error_result("agy_not_found", "agy executable not found; set AGY_BIN")
     except OSError as exc:
         return _error_result("agy_spawn_failed", str(exc))
 
     exit_code = meta["exitCode"]
+    envelope = parse_envelope(meta["stdout"])
+    conversation_id = str(envelope.get("conversation_id") or "").strip() or None
     text = extract_response_text(meta["stdout"])
+    continuations = 0
+
+    # plan-and-wait 兜底：即便带了守卫段，agy 仍可能概率性地停下来等人批准。
+    # 用同一个 conversation 有界续跑一次；成功才覆盖首轮产物，失败保留原文。
+    if (
+        exit_code == 0
+        and looks_like_plan_wait(text)
+        and conversation_id is not None
+        and MAX_CONTINUATIONS > 0
+    ):
+        log(f"plan-and-wait detected; resuming conversation={conversation_id}")
+        try:
+            resumed = run_agy(
+                ["-p", RESUME_PROMPT, *base_args, "--conversation", conversation_id],
+                cwd=effective_cwd,
+                timeout_s=timeout_s,
+            )
+        except (FileNotFoundError, OSError) as exc:
+            log(f"continuation spawn failed: {exc}")
+            resumed = None
+        if resumed is not None and resumed["exitCode"] == 0:
+            resumed_text = extract_response_text(resumed["stdout"])
+            if resumed_text and not looks_like_plan_wait(resumed_text):
+                text = resumed_text
+                meta = {
+                    **resumed,
+                    "durationS": round(meta["durationS"] + resumed["durationS"], 2),
+                }
+                exit_code = 0
+                continuations = 1
+        if continuations == 0:
+            log("continuation did not yield a final deliverable; keeping first-round text")
+
+    plan_wait = looks_like_plan_wait(text)
+    context: dict[str, Any] = {
+        "kind": "research",
+        "model": model or "default",
+        "effort": effort or "default",
+        "cwd": effective_cwd,
+        "durationS": meta["durationS"],
+        "readOnly": True,
+        "planWait": plan_wait,
+        "continuations": continuations,
+    }
 
     if exit_code == 0 and text:
-        structured = {
-            "kind": "research",
-            "text": text,
-            "model": model or "default",
-            "effort": effort or "default",
-            "cwd": effective_cwd,
-            "durationS": meta["durationS"],
-            "readOnly": True,
-        }
+        structured = {**context, "text": text}
         return _text_result(text, structured)
 
     if exit_code == 0 and not text:
         raw = meta["stdout"].strip()
         if raw:
-            structured = {
-                "kind": "research",
-                "text": raw,
-                "model": model or "default",
-                "effort": effort or "default",
-                "cwd": effective_cwd,
-                "durationS": meta["durationS"],
-                "readOnly": True,
-                "parsed": False,
-            }
+            structured = {**context, "text": raw, "parsed": False}
             return _text_result(raw, structured)
         return _error_result("empty_output", "agy completed with no output")
 
@@ -391,8 +475,11 @@ TOOLS: list[dict[str, Any]] = [
             "host's Antigravity (agy) agent and return its final analysis text. The "
             "delegation is pinned to a safe read-only shape: agy --sandbox --mode plan; "
             "it can read files and inspect the workspace but cannot write, edit, run "
-            "mutating commands, or change system state. Use it for deep dives that "
-            "should not consume the calling agent's context."
+            "mutating commands, or change system state. A non-interactive guardrail is "
+            "appended automatically so agy delivers the answer in the same turn instead "
+            "of waiting for plan approval, plus one bounded continuation if it still "
+            "stops to ask. Use it for deep dives that should not consume the calling "
+            "agent's context."
         ),
         "inputSchema": {
             "type": "object",
