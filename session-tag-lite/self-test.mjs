@@ -105,7 +105,7 @@ test('空输入只给出保留名', () => {
     due: {},
     collapsed: {},
     colors: {},
-    options: { recentHours: 24, rowAction: true, panelView: 'tree', archiveLast: true }
+    options: { recentHours: 24, rowAction: true, panelView: 'tree', archiveLast: true, tagOrder: null }
   });
   assert.deepEqual(t.normalizeData('x').tags, ['待办', '存档']);
 });
@@ -537,6 +537,111 @@ test('archivedIdsOf 兼容各种快照形状', () => {
   assert.deepEqual([...t.archivedIdsOf({ archivedSessionIds: ['a', 'b'] })], ['a', 'b']);
 });
 
+console.log('宿主归档筛选（跟随左栏「视图选项」）');
+
+const allRows = (model) =>
+  model.groups.reduce((acc, group) => acc.concat(group.rows.map((row) => row.id)), []);
+
+test('archivedFilterOfRaw 解析宿主 viewing store，脏值回落 default', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  assert.equal(t.archivedFilterOfRaw(null), 'default');
+  assert.equal(t.archivedFilterOfRaw(''), 'default');
+  assert.equal(t.archivedFilterOfRaw('not json'), 'default');
+  assert.equal(t.archivedFilterOfRaw('null'), 'default');
+  assert.equal(t.archivedFilterOfRaw('[]'), 'default');
+  assert.equal(t.archivedFilterOfRaw('{}'), 'default', '旧快照没有该字段时等同隐藏已归档');
+  assert.equal(t.archivedFilterOfRaw('{"archivedFilter":"default"}'), 'default');
+  assert.equal(t.archivedFilterOfRaw('{"archivedFilter":"show"}'), 'show');
+  assert.equal(t.archivedFilterOfRaw('{"archivedFilter":"only"}'), 'only');
+  assert.equal(t.archivedFilterOfRaw('{"archivedFilter":"bogus"}'), 'default');
+});
+
+test('archivedFilterOf 读取 dsh.workspace.view.v5 的当前筛选', () => {
+  const storage = memoryStorage({
+    'dsh.workspace.view.v5': '{"groupBy":"flat","archivedFilter":"only"}'
+  });
+  const { test: t } = loadPlugin(storage);
+  assert.equal(t.HOST_VIEW_STORE_KEY, 'dsh.workspace.view.v5');
+  assert.equal(t.archivedFilterOf(), 'only');
+  storage.setItem('dsh.workspace.view.v5', '{"archivedFilter":"show"}');
+  assert.equal(t.archivedFilterOf(), 'show');
+  storage.removeItem('dsh.workspace.view.v5');
+  assert.equal(t.archivedFilterOf(), 'default', '没有这个键时等同隐藏已归档');
+  storage.setItem('dsh.workspace.view.v5', 'broken');
+  assert.equal(t.archivedFilterOf(), 'default', '坏 JSON 不抛错');
+});
+
+test('缺省筛选行为与改动前一致：归档会话不上架', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const fallback = t.buildPanelModel(tagState, sessionsFixture, '', new Set(['s3']));
+  const explicit = t.buildPanelModel(tagState, sessionsFixture, '', new Set(['s3']), new Set(), 'default');
+  assert.deepEqual(allRows(explicit), allRows(fallback));
+  assert.equal(fallback.total, 2);
+});
+
+test('show：归档与未归档一起出现，归档行带 archived 标记', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const model = t.buildPanelModel(tagState, sessionsFixture, '', new Set(['s3']), new Set(), 'show');
+  assert.equal(model.total, 3, 's3 也上架');
+  const rows = model.groups.reduce((acc, group) => acc.concat(group.rows), []);
+  const archivedIds = [...new Set(rows.filter((row) => row.archived).map((row) => row.id))];
+  assert.deepEqual(archivedIds, ['s3']);
+  const liveIds = rows.filter((row) => !row.archived).map((row) => row.id);
+  assert.equal(liveIds.indexOf('s3'), -1, '归档行只以 archived 身份出现');
+  const reading = model.groups.find((group) => group.name === '读书');
+  assert.deepEqual(reading.rows.map((row) => row.id), ['s2', 's3'], '标签组也含归档会话');
+});
+
+test('only：只保留归档会话，未归档一条不剩', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const model = t.buildPanelModel(tagState, sessionsFixture, '', new Set(['s3']), new Set(), 'only');
+  assert.equal(model.total, 1);
+  assert.deepEqual([...new Set(allRows(model))], ['s3']);
+  const rows = model.groups.reduce((acc, group) => acc.concat(group.rows), []);
+  assert.ok(rows.every((row) => row.archived === true));
+});
+
+test('only：没有归档会话时保留标签骨架但不留行', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const model = t.buildPanelModel(tagState, sessionsFixture, '', new Set(), new Set(), 'only');
+  assert.equal(model.total, 0);
+  assert.equal(allRows(model).length, 0);
+  assert.deepEqual(
+    model.groups.map((group) => group.key),
+    ['待办', '存档'],
+    '保留组骨架仍在，未打标组不出现'
+  );
+});
+
+test('only：搜索只在归档集合内命中', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const model = t.buildPanelModel(tagState, sessionsFixture, '会议', new Set(['s3']), new Set(), 'only');
+  assert.equal(model.groups.length, 0, 's2 未归档，不参与搜索');
+
+  const hit = t.buildPanelModel(tagState, sessionsFixture, 'Gamma', new Set(['s3']), new Set(), 'only');
+  const reading = hit.groups.find((group) => group.name === '读书');
+  assert.deepEqual(reading.rows.map((row) => row.id), ['s3']);
+});
+
+test('show / only 不会把子代理、空白会话或缺失会话带上架', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  for (const scope of ['show', 'only']) {
+    const model = t.buildPanelModel(
+      tagState,
+      sessionsFixture,
+      '',
+      new Set(['s3', 'sub1', 'blank1', 'gone']),
+      new Set(),
+      scope
+    );
+    const ids = [...new Set(allRows(model))];
+    assert.equal(ids.indexOf('sub1'), -1, scope + ' 下子代理仍不上架');
+    assert.equal(ids.indexOf('blank1'), -1, scope + ' 下空白草稿仍不上架');
+    assert.equal(ids.indexOf('gone'), -1, scope + ' 下缺失 id 仍不上架');
+    if (scope === 'only') assert.deepEqual(ids, ['s3']);
+  }
+});
+
 console.log('菜单文案');
 
 test('「…」菜单项是动词短语且不带省略号', () => {
@@ -640,6 +745,69 @@ test('窗口内没有会话时不出现「最近」分区', () => {
     model.groups.map((group) => group.key),
     ['待办', '存档', t.UNTAGGED_KEY]
   );
+});
+
+/* 「最近」分区横跨多个标签：行序跟随左栏槽位，同槽内仍按时间倒序。 */
+function recentWithTags() {
+  const now = Date.now();
+  const list = {
+    ids: ['a', 'b', 'c', 'd'],
+    byId: {
+      a: { id: 'a', displayTitle: 'A 无标签', updatedAt: now - 1000, running: false, blank: false },
+      b: { id: 'b', displayTitle: 'B 待办', updatedAt: now - 2000, running: false, blank: false },
+      c: { id: 'c', displayTitle: 'C 存档', updatedAt: now - 3000, running: false, blank: false },
+      d: { id: 'd', displayTitle: 'D 待办', updatedAt: now - 4000, running: false, blank: false }
+    },
+    phase: 'ready',
+    projectionsBySession: {}
+  };
+  return { list, now };
+}
+
+test('「最近」分区跟随槽位排序：标签优先，同槽按时间倒序', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const { list } = recentWithTags();
+  const state = {
+    tags: ['待办', '存档'],
+    marks: { b: ['待办'], c: ['存档'], d: ['待办'] },
+    due: {},
+    collapsed: {},
+    colors: {},
+    options: { recentHours: 24, tagOrder: ['__pinned__', '待办', '__untagged__', '存档'] }
+  };
+  const model = t.buildPanelModel(state, list, '', new Set(), new Set());
+  assert.equal(model.groups[0].key, t.RECENT_KEY);
+  assert.deepEqual(model.groups[0].rows.map((row) => row.id), ['b', 'd', 'a', 'c']);
+});
+
+test('默认模式下「最近」分区把存档置底，其余按时间', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const { list } = recentWithTags();
+  const state = {
+    tags: ['待办', '存档'],
+    marks: { c: ['存档'] },
+    due: {},
+    collapsed: {},
+    colors: {},
+    options: { recentHours: 24 }
+  };
+  const model = t.buildPanelModel(state, list, '', new Set(), new Set());
+  assert.deepEqual(model.groups[0].rows.map((row) => row.id), ['a', 'b', 'd', 'c']);
+});
+
+test('「最近」分区里置顶行归置顶槽', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const { list } = recentWithTags();
+  const state = {
+    tags: ['待办', '存档'],
+    marks: { b: ['待办'], c: ['存档'] },
+    due: {},
+    collapsed: {},
+    colors: {},
+    options: { recentHours: 24, tagOrder: ['__pinned__', '待办', '__untagged__', '存档'] }
+  };
+  const model = t.buildPanelModel(state, list, '', new Set(), new Set(['c']));
+  assert.deepEqual(model.groups[0].rows.map((row) => row.id), ['c', 'b', 'a', 'd']);
 });
 
 test('选项规范化：合法值保留，脏值回落 24', () => {
@@ -800,7 +968,7 @@ test('开关状态随远端恢复一起读入', () => {
   assert.deepEqual(restored.marks.s1, ['待办'], '规范化不丢标签数据');
 });
 
-console.log('存档置底（标签序排序）');
+console.log('左栏排序：默认模式（存档置底）');
 
 test('缺省开启；只有显式 false 才关闭', () => {
   const { test: t } = loadPlugin(memoryStorage());
@@ -841,14 +1009,215 @@ test('setArchiveLast 落盘、幂等、不覆盖其他选项', () => {
   off();
 });
 
-test('tagFootRank：命中「存档」为 1，其余为 0', () => {
+console.log('左栏排序：自定义槽位');
+
+test('tagOrderOf：缺省、空数组与非数组都表示默认模式', () => {
   const { test: t } = loadPlugin(memoryStorage());
-  assert.equal(t.tagFootRank([]), 0);
-  assert.equal(t.tagFootRank(['读书']), 0);
-  assert.equal(t.tagFootRank(['待办']), 0);
-  assert.equal(t.tagFootRank(['存档']), 1);
-  assert.equal(t.tagFootRank(['待办', '存档']), 1);
-  assert.equal(t.tagFootRank(['存档', '读书']), 1);
+  assert.equal(t.tagOrderOf(t.normalizeData(null)), null);
+  assert.equal(t.tagOrderOf({ options: {} }), null);
+  assert.equal(t.tagOrderOf({ options: { tagOrder: [] } }), null);
+  assert.equal(t.tagOrderOf({ options: { tagOrder: 'x' } }), null);
+  assert.deepEqual(t.tagOrderOf({ options: { tagOrder: ['待办'] }, tags: ['待办', '存档'] }), ['待办']);
+});
+
+test('normalizeTagOrder：只留池内标签与保留槽，去重保序并截断', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const state = { tags: ['待办', '存档', '读书'] };
+  assert.deepEqual(
+    t.normalizeTagOrder(['__pinned__', '读书', '读书', '不存在', '', '__untagged__'], state),
+    ['__pinned__', '读书', '__untagged__']
+  );
+  assert.equal(t.normalizeTagOrder([], state), null);
+  assert.equal(t.normalizeTagOrder('x', state), null);
+  assert.equal(t.normalizeTagOrder(['不存在'], state), null);
+});
+
+test('resolveSlots：补齐置顶与未打标，新标签插到未打标之前', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const state = { tags: ['待办', '存档', '读书', '工作'] };
+  assert.deepEqual(t.resolveSlots(state, ['待办', '存档']), [
+    '__pinned__',
+    '待办',
+    '存档',
+    '读书',
+    '工作',
+    '__untagged__'
+  ]);
+  assert.deepEqual(t.resolveSlots(state, ['__pinned__', '读书', '__untagged__', '存档']), [
+    '__pinned__',
+    '读书',
+    '待办',
+    '工作',
+    '__untagged__',
+    '存档'
+  ]);
+  assert.equal(t.resolveSlots(state, null), null);
+});
+
+test('defaultOrderPreset：最近 › 置顶 › 待办 › 其他标签 › 未打标 › 存档', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const preset = t.defaultOrderPreset({ tags: ['待办', '存档', '读书', '工作'] });
+  assert.equal(preset[0], '__recent__');
+  assert.equal(preset[1], '__pinned__');
+  assert.equal(preset[2], '待办');
+  assert.deepEqual(preset.slice(-2), ['__untagged__', '存档']);
+  assert.deepEqual(preset.slice(3, -2).slice().sort(), ['工作', '读书'].sort());
+});
+
+test('normalizeTagOrder / resolveSlots 接受「最近」槽，但不会自动补它', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const state = { tags: ['待办', '存档'] };
+  assert.deepEqual(
+    t.normalizeTagOrder(['__recent__', '待办', '__untagged__'], state),
+    ['__recent__', '待办', '__untagged__']
+  );
+  assert.equal(t.resolveSlots(state, ['待办'])[0], '__pinned__', '不自动补最近');
+  assert.equal(t.resolveSlots(state, ['__recent__', '待办']).indexOf('__recent__'), 1);
+});
+
+test('slotOfSession 不会把会话归到「最近」槽', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const slots = ['__recent__', '__pinned__', '待办', '__untagged__'];
+  assert.equal(t.slotOfSession('s1', ['待办'], new Set(), slots), '待办');
+  assert.equal(t.slotOfSession('s2', [], new Set(), slots), '__untagged__');
+});
+
+test('orderGroups：面板分组顺序跟随槽位，最近可排到最后', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const state = {
+    tags: ['待办', '存档', '读书'],
+    options: { recentHours: 24, tagOrder: ['待办', '存档', '__recent__', '读书', '__untagged__'] }
+  };
+  const groups = [
+    { key: '__recent__' },
+    { key: '待办' },
+    { key: '存档' },
+    { key: '读书' },
+    { key: '__untagged__' }
+  ];
+  assert.deepEqual(
+    t.orderGroups(state, groups).map((group) => group.key),
+    ['待办', '存档', '__recent__', '读书', '__untagged__']
+  );
+
+  /* 旧数组没有「最近」槽：保持它在最前。 */
+  const legacy = { tags: ['待办'], options: { tagOrder: ['待办', '__untagged__'] } };
+  assert.deepEqual(
+    t.orderGroups(legacy, [{ key: '__recent__' }, { key: '待办' }, { key: '__untagged__' }]).map(
+      (group) => group.key
+    ),
+    ['__recent__', '待办', '__untagged__']
+  );
+});
+
+test('slotOfSession：置顶与标签按槽位先后竞争，未排标签归未打标', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const slots = ['__pinned__', '待办', '读书', '__untagged__', '存档'];
+  assert.equal(t.slotOfSession('p1', ['读书'], new Set(['p1']), slots), '__pinned__');
+  assert.equal(t.slotOfSession('s1', ['存档', '待办'], new Set(), slots), '待办');
+  assert.equal(t.slotOfSession('s2', ['存档'], new Set(), slots), '存档');
+  assert.equal(t.slotOfSession('s3', [], new Set(), slots), '__untagged__');
+  assert.equal(t.slotOfSession('s4', ['工作'], new Set(), slots), '__untagged__');
+  assert.equal(t.slotOfSession('s5', ['工作'], new Set(), null), null);
+
+  /* 存档槽排在置顶前：置顶+存档的会话归存档区；无标签置顶仍归置顶槽。 */
+  const archiveFirst = ['存档', '__pinned__', '__untagged__'];
+  assert.equal(t.slotOfSession('p2', ['存档'], new Set(['p2']), archiveFirst), '存档');
+  assert.equal(t.slotOfSession('p3', [], new Set(['p3']), archiveFirst), '__pinned__');
+});
+
+test('orderValueOf：空白草稿 -1，其余是槽位下标', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const slots = ['__pinned__', '待办', '__untagged__'];
+  assert.equal(t.orderValueOf('blank', { blank: true }, [], new Set(), slots), -1);
+  assert.equal(t.orderValueOf('p', {}, [], new Set(['p']), slots), 0);
+  assert.equal(t.orderValueOf('t', {}, ['待办'], new Set(), slots), 1);
+  assert.equal(t.orderValueOf('u', {}, [], new Set(), slots), 2);
+});
+
+test('inRecentWindow：运行中算最近，其余按窗口', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const now = Date.now();
+  assert.equal(t.inRecentWindow(null, 24, now), false);
+  assert.equal(t.inRecentWindow({ updatedAt: now - 1000 }, 24, now), true);
+  assert.equal(t.inRecentWindow({ updatedAt: now - 30 * 3600 * 1000 }, 24, now), false);
+  assert.equal(t.inRecentWindow({ updatedAt: now - 30 * 3600 * 1000, running: true }, 24, now), true);
+  assert.equal(t.inRecentWindow({ updatedAt: 0 }, 24, now), false);
+});
+
+test('slotOfSession：最近窗口内的会话归「最近」槽，按槽位先后竞争', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const slots = ['__pinned__', '__recent__', '待办', '__untagged__', '存档'];
+  assert.equal(t.slotOfSession('r1', [], new Set(), slots, true), '__recent__');
+  assert.equal(t.slotOfSession('r2', ['待办'], new Set(), slots, true), '__recent__');
+  assert.equal(t.slotOfSession('r3', ['待办'], new Set(), slots, false), '待办');
+  assert.equal(t.slotOfSession('p1', [], new Set(['p1']), slots, true), '__pinned__');
+
+  /* 最近排在置顶前：置顶+最近也归最近。 */
+  const recentFirst = ['__recent__', '__pinned__', '__untagged__'];
+  assert.equal(t.slotOfSession('p2', [], new Set(['p2']), recentFirst, true), '__recent__');
+  assert.equal(t.slotOfSession('p3', [], new Set(['p3']), recentFirst, false), '__pinned__');
+});
+
+test('orderValueOf 支持 recent 参数', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const slots = ['__recent__', '__pinned__', '待办', '__untagged__'];
+  assert.equal(t.orderValueOf('r', {}, [], new Set(), slots, true), 0);
+  assert.equal(t.orderValueOf('u', {}, [], new Set(), slots, false), 3);
+});
+
+test('orderSummary：默认摘要与自定义链路', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  assert.equal(t.orderSummary(t.normalizeData(null)), '默认 · 存档置底');
+  assert.equal(t.orderSummary(t.normalizeData({ options: { archiveLast: false } })), '默认 · 不排序');
+  const custom = t.normalizeData({
+    options: { tagOrder: ['__pinned__', '待办', '__untagged__', '存档'] }
+  });
+  assert.equal(t.orderSummary(custom), '置顶会话 › 待办 › 未打标 › 存档');
+});
+
+test('setTagOrder 落盘、幂等、不覆盖其他选项；resetTagOrder 回默认', () => {
+  const storage = memoryStorage();
+  const { test: t } = loadPlugin(storage);
+  t.setRecentHours(48);
+  t.setArchiveLast(false);
+  let notified = 0;
+  const off = t.subscribe(function () {
+    notified += 1;
+  });
+
+  t.setTagOrder(['待办', '__untagged__']);
+  assert.deepEqual(t.tagOrderOf(t.getData()), ['待办', '__untagged__']);
+  assert.equal(notified, 1);
+  const saved = JSON.parse(storage.read(t.STORAGE_KEY));
+  assert.deepEqual(saved.options.tagOrder, ['待办', '__untagged__']);
+  assert.equal(saved.options.recentHours, 48, '排序不覆盖「最近」窗口');
+  assert.equal(saved.options.archiveLast, false, '排序不覆盖存档置底开关');
+
+  t.setTagOrder(['待办', '__untagged__']);
+  assert.equal(notified, 1, '同值不产生提交');
+
+  t.resetTagOrder();
+  assert.equal(t.tagOrderOf(t.getData()), null);
+  assert.equal(notified, 2);
+  assert.equal(JSON.parse(storage.read(t.STORAGE_KEY)).options.tagOrder, null);
+  off();
+});
+
+test('排序数组里的孤儿标签在规范化时被丢弃', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const out = t.normalizeData({
+    tags: ['读书'],
+    marks: { s1: ['读书'] },
+    options: { tagOrder: ['读书', '已删除', '待办'] }
+  });
+  assert.deepEqual(out.options.tagOrder, ['读书', '待办']);
+});
+
+test('旧数据没有 tagOrder 时保持 null（默认模式）', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const out = t.normalizeData({ options: { recentHours: 24 } });
+  assert.equal(out.options.tagOrder, null);
 });
 
 console.log('旧保留名迁移（归档 → 存档）');

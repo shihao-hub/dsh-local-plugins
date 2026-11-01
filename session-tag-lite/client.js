@@ -8,6 +8,31 @@
       const React = require('react');
       const h = React.createElement;
 
+      /**
+       * 设置页里的排序弹窗必须挂到 body：宿主 shell 的 `shell.overlay` 位于
+       * `overlayLayer`（z-index 20）这个 stacking context 内，而设置面板是
+       * z-index 1000 的独立 portal——槽位里的 fixed 浮层再高也盖不住它。
+       * 用 createPortal 脱离该层；拿不到 react-dom 时退回槽内渲染。
+       */
+      let reactDom = null;
+      try {
+        reactDom = require('react-dom');
+      } catch {
+        reactDom = null;
+      }
+      function portalToBody(element) {
+        if (
+          reactDom !== null &&
+          reactDom !== undefined &&
+          typeof reactDom.createPortal === 'function' &&
+          typeof document !== 'undefined' &&
+          document.body !== null
+        ) {
+          return reactDom.createPortal(element, document.body);
+        }
+        return element;
+      }
+
       /* ==================================================================== *
        * 会话标签（轻量）—— 参考 typeai WebUI 的「添加标签」能力
        *
@@ -46,10 +71,13 @@
       const UNTAGGED_KEY = '__untagged__';
 
       /**
-       * 左栏单列表的标签排序权重：数组里越靠前，会话越靠后（本期只有「存档」）。
-       * 后续要做「多重排序」时在这里加名字即可，DOM 同步逻辑不用动。
+       * 左栏单列表的排序槽位：数组里越靠前，会话越靠上（列表顶部）。
+       * `__pinned__`（官方置顶）与 `__untagged__`（无标签）是保留槽，
+       * 运行时总会补齐；其余元素是标签名。
        */
-      const TAG_FOOT_ORDER = [ARCHIVE];
+      const PINNED_SLOT = '__pinned__';
+      const UNTAGGED_SLOT = '__untagged__';
+      const CUSTOM_ORDER_MAX = 64;
 
       const MAX_NAME_LEN = 24;
       /** 行尾色盘最多显示几段颜色；超过时只取前几段，完整标签名放在 title 里。 */
@@ -66,6 +94,13 @@
       const RECENT_MIN_HOURS = 1;
       const RECENT_MAX_HOURS = 720;
       const RECENT_PRESETS = [6, 12, 24, 48, 72, 168];
+
+      /**
+       * 宿主左栏「视图选项」的归档筛选状态存在这个 localStorage 键里
+       * （ui-workspace 的 viewing store，`archivedFilter: 'default' | 'show' | 'only'`）。
+       * 面板要镜像同一口径：宿主筛选什么，标签面板就显示什么。
+       */
+      const HOST_VIEW_STORE_KEY = 'dsh.workspace.view.v5';
 
       /** 语义色与哈希色环（typeai 同款调色板）。 */
       const TODO_COLOR = '#d9a441';
@@ -99,6 +134,12 @@
         'panel.loading': '正在读取会话列表…',
         'panel.empty': '没有匹配的会话',
         'panel.emptyIdle': '还没有打过标签的会话；在会话行上点标签按钮开始',
+        'panel.emptyArchivedOnly': '没有归档会话；左栏切回「隐藏已归档」可看普通对话',
+        'panel.archived': '已归档',
+        'panel.archivedHint': '已归档 · 打开时会先取消归档',
+        'panel.filterShow': '含已归档',
+        'panel.filterOnly': '仅已归档',
+        'panel.filterHint': '跟随左栏筛选：{mode}',
         'panel.showAll': '显示全部 {n} 个',
         'panel.close': '关闭',
         'panel.viewGroup': '面板视图',
@@ -132,10 +173,30 @@
         'row.desc': '关闭后会话行尾不再出现色盘；仍可用「… → 编辑标签」打标签',
         'row.enable': '显示行尾标签按钮',
         'row.disable': '隐藏行尾标签按钮',
-        'order.title': '存档标签置底',
-        'order.desc': '左侧单列表里，打了「存档」标签的会话排在最后；分组视图不受影响',
-        'order.enable': '开启存档标签置底',
-        'order.disable': '关闭存档标签置底'
+        'order.title': '左栏标签排序',
+        'order.summaryDefault': '默认 · 存档置底',
+        'order.summaryOff': '默认 · 不排序',
+        'order.customize': '自定义排序…',
+        'order.edit': '编辑排序…',
+        'order.reset': '恢复默认',
+        'order.done': '完成',
+        'order.close': '关闭',
+        'order.start': '启用自定义排序',
+        'order.intro': '默认只让「存档」会话置底，其余按宿主顺序。启用自定义后，可以把「最近 / 置顶 / 待办 / 未打标」等槽位排成任意顺序；同一个槽位内仍按宿主顺序。',
+        'order.hint': '只影响左侧「单列表」；同一槽内保持宿主原顺序；一个会话有多个标签时，取排序里最靠前的那个。',
+        'order.newTagHint': '没有单独排序的标签（包括以后新建的）会自动落在「未打标」之前。',
+        'order.recentHint': '「最近」把最近 N 小时内有活动的会话聚成一个档位，左栏和标签面板都生效；运行中的会话始终算最近。',
+        'order.dragHint': '视觉顺序与宿主的拖拽落点可能不一致；需要精确拖拽时先恢复默认。',
+        'order.typeRecent': '最近分区',
+        'order.typePinned': '官方置顶',
+        'order.typeUntagged': '未打标',
+        'order.typeTag': '标签',
+        'order.slotPinned': '置顶会话',
+        'order.slotUntagged': '未打标',
+        'order.moveUp': '上移「{name}」',
+        'order.moveDown': '下移「{name}」',
+        'order.enable': '开启存档置底',
+        'order.disable': '关闭存档置底'
       };
 
       const en = {
@@ -164,6 +225,12 @@
         'panel.loading': 'Reading the Session list…',
         'panel.empty': 'No matching Sessions',
         'panel.emptyIdle': 'No tagged Sessions yet — use the tag button on a Session row',
+        'panel.emptyArchivedOnly': 'No archived Sessions — switch the sidebar back to “Hide archived”',
+        'panel.archived': 'Archived',
+        'panel.archivedHint': 'Archived — opening it unarchives it first',
+        'panel.filterShow': 'With archived',
+        'panel.filterOnly': 'Archived only',
+        'panel.filterHint': 'Follows the sidebar filter: {mode}',
         'panel.showAll': 'Show all {n}',
         'panel.close': 'Close',
         'panel.viewGroup': 'Panel view',
@@ -197,10 +264,30 @@
         'row.desc': 'Hides the swatch at the end of each Session row; you can still tag through “…” → Edit tags',
         'row.enable': 'Show the tag button',
         'row.disable': 'Hide the tag button',
-        'order.title': 'Archived-tag Sessions last',
-        'order.desc': 'In the flat Session list, Sessions tagged “存档” go to the bottom; grouped views are unchanged',
-        'order.enable': 'Send archived-tag Sessions last',
-        'order.disable': 'Stop sending archived-tag Sessions last'
+        'order.title': 'Sidebar tag order',
+        'order.summaryDefault': 'Default · archived tag last',
+        'order.summaryOff': 'Default · no sorting',
+        'order.customize': 'Customize order…',
+        'order.edit': 'Edit order…',
+        'order.reset': 'Restore default',
+        'order.done': 'Done',
+        'order.close': 'Close',
+        'order.start': 'Enable custom order',
+        'order.intro': 'By default only Sessions tagged “存档” sink to the bottom; everything else keeps the host order. A custom order turns “recent / pinned / 待办 / untagged” slots into any sequence you like; rows inside a slot keep the host order.',
+        'order.hint': 'Affects the flat Session list only. Rows in a slot keep the host order; a Session with several tags takes the highest-ranked one.',
+        'order.newTagHint': 'Tags you have not ordered yet — including new ones — land just before “untagged”.',
+        'order.recentHint': '“Recent” groups every Session active in the last N hours into one slot; it applies to both the sidebar and the tag panel. Running Sessions always count as recent.',
+        'order.dragHint': 'Visual order can differ from the host’s drag targets; restore the default before drag-sorting.',
+        'order.typeRecent': 'Recent section',
+        'order.typePinned': 'Host pinned',
+        'order.typeUntagged': 'Untagged',
+        'order.typeTag': 'Tag',
+        'order.slotPinned': 'Pinned Sessions',
+        'order.slotUntagged': 'Untagged',
+        'order.moveUp': 'Move “{name}” up',
+        'order.moveDown': 'Move “{name}” down',
+        'order.enable': 'Keep archived-tag Sessions last',
+        'order.disable': 'Stop keeping archived-tag Sessions last'
       };
 
       /* ------------------------------------------------------------------ *
@@ -329,7 +416,9 @@
             recentHours: DEFAULT_RECENT_HOURS,
             rowAction: true,
             panelView: DEFAULT_PANEL_VIEW,
-            archiveLast: true
+            archiveLast: true,
+            /** null = 默认模式（仅存档置底）；数组 = 自定义槽位排序。 */
+            tagOrder: null
           }
         };
       }
@@ -348,8 +437,159 @@
         return name === LEGACY_ARCHIVE ? ARCHIVE : name;
       }
 
+      /* ------------------------------------------------------------------ *
+       * 标签排序模型（纯函数，便于离线测试）
+       *
+       * 槽位数组从列表顶部到底部排列；两个保留槽 `__pinned__` / `__untagged__`
+       * 由运行时补齐。标签池里新增、但用户没排过的标签会自动落在
+       * 「未打标」之前，保持宿主相对顺序。
+       * ------------------------------------------------------------------ */
+
+      /** 规范化排序数组：只留标签池里的标签与两个保留槽，去重、保序、截断。 */
+      function normalizeTagOrder(raw, state) {
+        if (!Array.isArray(raw)) return null;
+        const pool = new Set(RESERVED.slice());
+        if (state !== null && state !== undefined && Array.isArray(state.tags)) {
+          for (const name of state.tags) pool.add(name);
+        }
+        const out = [];
+        const seen = new Set();
+        for (const value of raw) {
+          const name =
+            value === PINNED_SLOT || value === UNTAGGED_SLOT || value === RECENT_KEY
+              ? value
+              : canonicalName(value);
+          if (name === '' || seen.has(name)) continue;
+          if (
+            name !== PINNED_SLOT &&
+            name !== UNTAGGED_SLOT &&
+            name !== RECENT_KEY &&
+            !pool.has(name)
+          ) {
+            continue;
+          }
+          seen.add(name);
+          out.push(name);
+          if (out.length >= CUSTOM_ORDER_MAX) break;
+        }
+        return out.length === 0 ? null : out;
+      }
+
+      /** 读当前自定义排序；缺失、空数组或脏值都表示「默认模式」。 */
+      function tagOrderOf(state) {
+        if (state === null || state === undefined) return null;
+        if (state.options === null || state.options === undefined) return null;
+        const raw = state.options.tagOrder;
+        if (!Array.isArray(raw) || raw.length === 0) return null;
+        return normalizeTagOrder(raw, state);
+      }
+
+      /** 运行时槽位表：补齐置顶槽、未打标槽，并把没排过的新标签插到未打标之前。 */
+      function resolveSlots(state, order) {
+        if (!Array.isArray(order) || order.length === 0) return null;
+        const slots = [];
+        const seen = new Set();
+        for (const name of order) {
+          if (name === '' || seen.has(name)) continue;
+          seen.add(name);
+          slots.push(name);
+        }
+        if (!seen.has(PINNED_SLOT)) slots.unshift(PINNED_SLOT);
+        const extras = (state !== null && state !== undefined && Array.isArray(state.tags)
+          ? state.tags
+          : []
+        ).filter(function (name) {
+          return (
+            name !== PINNED_SLOT &&
+            name !== UNTAGGED_SLOT &&
+            name !== RECENT_KEY &&
+            !seen.has(name)
+          );
+        });
+        let at = slots.indexOf(UNTAGGED_SLOT);
+        if (at < 0) at = slots.length;
+        if (extras.length > 0) {
+          slots.splice.apply(slots, [at, 0].concat(extras));
+        }
+        if (!seen.has(UNTAGGED_SLOT)) slots.push(UNTAGGED_SLOT);
+        return slots;
+      }
+
       /**
-       * 读入即规范化：脏数据一律丢弃；marks 引用到的名字回填到池；
+       * 一次自定义排序的初始槽位：
+       * 最近 › 置顶 › 待办 › 其他标签（池序） › 未打标 › 存档。
+       * 「最近」只影响标签面板的分区位置，左栏没有这个分区（排序时会被过滤掉）。
+       */
+      function defaultOrderPreset(state) {
+        const others = orderedPool(state).filter(function (name) {
+          return name !== TODO && name !== ARCHIVE;
+        });
+        return [RECENT_KEY, PINNED_SLOT, TODO].concat(others, [UNTAGGED_SLOT, ARCHIVE]);
+      }
+
+      /** 槽位的可读名：保留槽走文案键，标签直接用名字。 */
+      function slotLabel(state, slot) {
+        if (slot === RECENT_KEY) {
+          return fill(T('panel.recent'), { hours: String(recentHoursOf(state)) });
+        }
+        if (slot === PINNED_SLOT) return T('order.slotPinned');
+        if (slot === UNTAGGED_SLOT) return T('order.slotUntagged');
+        return slot;
+      }
+
+      /** 自定义排序的可读摘要（设置行与弹窗头部）。 */
+      function orderSummary(state) {
+        const order = tagOrderOf(state);
+        if (order === null) {
+          return T(archiveLastOn(state) ? 'order.summaryDefault' : 'order.summaryOff');
+        }
+        return resolveSlots(state, order)
+          .map(function (slot) {
+            return slotLabel(state, slot);
+          })
+          .join(' › ');
+      }
+
+      /** 会话是否落在「最近 N 小时」窗口内：运行中无条件算最近。 */
+      function inRecentWindow(summary, hours, now) {
+        if (summary === null || summary === undefined) return false;
+        if (summary.running === true) return true;
+        const updated = Number(summary.updatedAt) || 0;
+        return updated > 0 && updated >= now - hours * 3600 * 1000;
+      }
+
+      /**
+       * 一个会话归到哪个槽：把「最近 / 置顶 / 命中的标签」都当作候选，
+       * 取槽位表里最靠前的那个；没有命中任何标签时用未打标兜底。
+       * 所以把「最近」放在「待办」前面，窗口内的待办会话会归最近区。
+       */
+      function slotOfSession(sessionId, names, pinnedIds, slots, recent) {
+        if (!Array.isArray(slots)) return null;
+        const candidates = [];
+        if (recent === true) candidates.push(RECENT_KEY);
+        if (pinnedIds instanceof Set && pinnedIds.has(sessionId)) candidates.push(PINNED_SLOT);
+        for (const slot of slots) {
+          if (slot === PINNED_SLOT || slot === UNTAGGED_SLOT || slot === RECENT_KEY) continue;
+          if (names.indexOf(slot) >= 0) candidates.push(slot);
+        }
+        /* 只有没命中任何标签槽才落到「未打标」，否则有标签的会话会被吸进未打标区。 */
+        if (candidates.length === 0) candidates.push(UNTAGGED_SLOT);
+        for (const slot of slots) {
+          if (candidates.indexOf(slot) >= 0) return slot;
+        }
+        return UNTAGGED_SLOT;
+      }
+
+      /** 一行的 CSS order：空白草稿豁免为 -1；其余是槽位下标。 */
+      function orderValueOf(sessionId, summary, names, pinnedIds, slots, recent) {
+        if (summary !== null && summary !== undefined && summary.blank === true) return -1;
+        const slot = slotOfSession(sessionId, names, pinnedIds, slots, recent);
+        if (slot === null) return 0;
+        const index = slots.indexOf(slot);
+        return index < 0 ? slots.length : index;
+      }
+
+      /** 读入即规范化：脏数据一律丢弃；marks 引用到的名字回填到池；
        * 池里已无任何会话使用、且不是保留名的标签被清理（typeai 无删除标签界面，
        * 标签随最后一个引用消失）。旧版保留名「归档」在这里迁移成「存档」。
        */
@@ -417,7 +657,8 @@
           recentHours: DEFAULT_RECENT_HOURS,
           rowAction: true,
           panelView: DEFAULT_PANEL_VIEW,
-          archiveLast: true
+          archiveLast: true,
+          tagOrder: null
         };
         if (raw.options !== null && typeof raw.options === 'object') {
           const hours = raw.options.recentHours;
@@ -432,6 +673,9 @@
             options.panelView = raw.options.panelView;
           }
           if (typeof raw.options.archiveLast === 'boolean') options.archiveLast = raw.options.archiveLast;
+          if (Array.isArray(raw.options.tagOrder)) {
+            options.tagOrder = normalizeTagOrder(raw.options.tagOrder, out);
+          }
         }
         out.options = options;
 
@@ -455,6 +699,10 @@
         for (const key of Object.keys(colors)) {
           if (kept.has(key) && RESERVED.indexOf(key) < 0) out.colors[key] = colors[key];
         }
+        /* 孤儿标签清理后，排序数组里也不该继续引用它们。 */
+        if (out.options.tagOrder !== null) {
+          out.options.tagOrder = normalizeTagOrder(out.options.tagOrder, out);
+        }
         return out;
       }
 
@@ -469,7 +717,7 @@
       }
 
       let data = loadData();
-      let ui = { editor: null, panel: false, panelQuery: null };
+      let ui = { editor: null, panel: false, panelQuery: null, order: false };
       let snapshot = { data: data, ui: ui };
       const listeners = new Set();
       let storageWarned = false;
@@ -717,6 +965,30 @@
         );
       }
 
+      function sameOrder(left, right) {
+        if (left === null || right === null) return left === right;
+        if (left.length !== right.length) return false;
+        return left.every(function (name, index) {
+          return name === right[index];
+        });
+      }
+
+      /** 保存自定义槽位排序；传 null 表示回到默认模式（仅存档置底）。 */
+      function setTagOrder(order) {
+        const next = normalizeTagOrder(order, data);
+        if (sameOrder(next, tagOrderOf(data))) return;
+        commitData(
+          Object.assign({}, data, {
+            options: Object.assign({}, data.options, { tagOrder: next })
+          })
+        );
+      }
+
+      /** 恢复默认排序：清掉自定义槽位，回到「存档置底」。 */
+      function resetTagOrder() {
+        setTagOrder(null);
+      }
+
       /** 小时数的人话标签：≥2 整天用「N 天」，其余用「N 小时」。 */
       function hoursLabel(hours) {
         if (hours >= 48 && hours % 24 === 0) {
@@ -802,14 +1074,15 @@
         ui = {
           editor: { sessionId: sessionId, title: typeof displayTitle === 'string' ? displayTitle : '' },
           panel: false,
-          panelQuery: null
+          panelQuery: null,
+          order: false
         };
         publish();
       }
 
       function closeEditor() {
         if (ui.editor === null) return;
-        ui = { editor: null, panel: false, panelQuery: null };
+        ui = { editor: null, panel: false, panelQuery: null, order: false };
         publish();
       }
 
@@ -817,14 +1090,26 @@
         ui = {
           editor: null,
           panel: true,
-          panelQuery: typeof query === 'string' && query.trim() !== '' ? query.trim() : null
+          panelQuery: typeof query === 'string' && query.trim() !== '' ? query.trim() : null,
+          order: false
         };
         publish();
       }
 
       function closePanel() {
         if (!ui.panel) return;
-        ui = { editor: null, panel: false, panelQuery: null };
+        ui = { editor: null, panel: false, panelQuery: null, order: false };
+        publish();
+      }
+
+      function openOrder() {
+        ui = { editor: null, panel: false, panelQuery: null, order: true };
+        publish();
+      }
+
+      function closeOrder() {
+        if (!ui.order) return;
+        ui = { editor: null, panel: false, panelQuery: null, order: false };
         publish();
       }
 
@@ -885,13 +1170,44 @@
         }
       }
 
+      /**
+       * 打开一个宿主已归档的会话。宿主对归档会话的规则是「取消归档后才能打开」，
+       * 否则主面板会被清成空白；所以先取消归档，再走正常打开。
+       * 服务缺失（老部署）时只提示，不做半截动作。
+       * @param {string} sessionId - 目标会话。
+       */
+      function openArchivedSession(sessionId) {
+        if (uiWorkspace === null || typeof uiWorkspace.unarchiveSession !== 'function') {
+          warn('该会话已归档：需先在左栏取消归档才能打开');
+          return;
+        }
+        let pending = null;
+        try {
+          pending = uiWorkspace.unarchiveSession(sessionId);
+        } catch (error) {
+          warn('取消归档失败', error);
+          return;
+        }
+        Promise.resolve(pending).then(
+          function () {
+            openSession(sessionId);
+          },
+          function (error) {
+            warn('取消归档失败', error);
+          }
+        );
+      }
+
       /* ------------------------------------------------------------------ *
-       * 左栏单列表排序：标签序置底
+       * 左栏单列表排序：自定义槽位 / 默认存档置底
        *
        * 宿主 ui-workspace 的「单列表」是一个 role="tree" 的块级流容器，没有排序
        * 座位；这里不接管列表，只做两件事：
        *   1. 给扁平列表容器加 display:flex（插件类），让 CSS order 生效；
-       *   2. 给带「存档」标签的行包装加 data-stl-foot，CSS 把它排到末尾。
+       *   2. 按槽位给每行写 inline order（空白草稿 -1，永远第一）。
+       *
+       * 默认模式（tagOrder 为 null）：只有「存档」行 order=1，其余 0，等价于
+       * 旧版的存档置底；自定义模式（数组）：槽位下标即 order，同槽保持宿主顺序。
        *
        * 为什么不是 DOM 重排：宿主用 keyed children 渲染，插件挪动节点会被下一次
        * commit 复原；order 只影响视觉，不写宿主状态，切视图 / 刷新都能重建。
@@ -899,7 +1215,6 @@
        * ------------------------------------------------------------------ */
 
       const FLAT_ORDER_CLASS = 'stl_flatOrder';
-      const ROW_FOOT_ATTR = 'data-stl-foot';
       let orderObserver = null;
       let orderFrame = 0;
 
@@ -911,26 +1226,57 @@
         return false;
       }
 
-      /** 标签排序权重：命中越靠前的名字权重越高；0 表示不置底。 */
-      function tagFootRank(names) {
-        let rank = 0;
-        for (let i = 0; i < TAG_FOOT_ORDER.length; i += 1) {
-          if (names.indexOf(TAG_FOOT_ORDER[i]) >= 0) {
-            rank = Math.max(rank, TAG_FOOT_ORDER.length - i);
-          }
-        }
-        return rank;
+      /** 宿主置顶集：Workspace 快照里的注册表级置顶列表。 */
+      function pinnedIdsOfSnapshot(snapshot) {
+        if (snapshot === null || snapshot === undefined) return new Set();
+        const ids = snapshot.pinnedSessionIds;
+        return Array.isArray(ids) ? new Set(ids) : new Set();
       }
 
-      /** 重新标记单列表里的置底行；容器不存在或开关关闭时清掉插件痕迹。 */
+      /** 当前 Workspace 快照的置顶集；服务缺失时给空集。 */
+      function pinnedIdsOf() {
+        return workspaceStore === null ? new Set() : pinnedIdsOfSnapshot(workspaceStore.getSnapshot());
+      }
+
+      /** 会话摘要（只为判断空白草稿；缺失时返回 null）。 */
+      function summaryOf(sessionId) {
+        if (sessionStore === null) return null;
+        const snap = sessionStore.getSnapshot();
+        if (
+          snap === null ||
+          snap === undefined ||
+          snap.byId === null ||
+          typeof snap.byId !== 'object'
+        ) {
+          return null;
+        }
+        const summary = snap.byId[sessionId];
+        return summary === undefined ? null : summary;
+      }
+
+      /** 清掉一个列表上的排序痕迹（切到分组视图 / 关掉排序时）。 */
+      function clearTreeOrder(tree) {
+        tree.classList.remove(FLAT_ORDER_CLASS);
+        for (const child of Array.from(tree.children)) {
+          if (child.style === undefined || typeof child.style.removeProperty !== 'function') continue;
+          child.style.removeProperty('order');
+        }
+      }
+
+      /** 重算单列表的视觉顺序；容器不存在或排序关闭时清掉插件痕迹。 */
       function refreshSidebarOrder() {
         if (typeof document === 'undefined' || document.body === null) return;
-        const enabled = archiveLastOn(data);
+        const order = tagOrderOf(data);
+        const custom = order !== null;
+        const enabled = custom || archiveLastOn(data);
+        const slots = custom ? resolveSlots(data, order) : null;
+        const pinned = pinnedIdsOf();
+        const hours = recentHoursOf(data);
+        const now = Date.now();
         const marks = data.marks === null || typeof data.marks !== 'object' ? {} : data.marks;
         for (const tree of Array.from(document.querySelectorAll('[role="tree"]'))) {
           if (!isFlatListTree(tree) || !enabled) {
-            tree.classList.remove(FLAT_ORDER_CLASS);
-            for (const child of Array.from(tree.children)) child.removeAttribute(ROW_FOOT_ATTR);
+            clearTreeOrder(tree);
             continue;
           }
           tree.classList.add(FLAT_ORDER_CLASS);
@@ -938,10 +1284,17 @@
             if (child.tagName !== 'SPAN') continue;
             const row = child.querySelector('[data-row-key^="session:"]');
             const key = row === null ? '' : row.getAttribute('data-row-key') || '';
+            if (key === '') continue;
             const id = key.slice('session:'.length);
             const names = Array.isArray(marks[id]) ? marks[id] : [];
-            if (tagFootRank(names) > 0) child.setAttribute(ROW_FOOT_ATTR, '');
-            else child.removeAttribute(ROW_FOOT_ATTR);
+            const summary = summaryOf(id);
+            const recent = custom && inRecentWindow(summary, hours, now);
+            const value = custom
+              ? orderValueOf(id, summary, names, pinned, slots, recent)
+              : names.indexOf(ARCHIVE) >= 0
+                ? 1
+                : 0;
+            child.style.order = String(value);
           }
         }
       }
@@ -972,6 +1325,41 @@
        * ------------------------------------------------------------------ */
 
       /**
+       * 把宿主 viewing store 的原始 JSON 解析成归档筛选模式。
+       * 缺失 / 脏值 / 旧快照（没有 archivedFilter 字段）一律回落 `default`
+       * —— 与宿主 `archivedFilter ?? 'default'` 的读法一致。
+       * @param {any} raw - `dsh.workspace.view.v5` 的字符串内容。
+       * @returns {'default'|'show'|'only'} 归档筛选模式。
+       */
+      function archivedFilterOfRaw(raw) {
+        if (typeof raw !== 'string' || raw === '') return 'default';
+        let parsed = null;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          return 'default';
+        }
+        if (parsed === null || typeof parsed !== 'object') return 'default';
+        const value = parsed.archivedFilter;
+        return value === 'show' || value === 'only' ? value : 'default';
+      }
+
+      /**
+       * 读宿主当前的归档筛选：`default` 隐藏已归档、`show` 全部对话、`only` 仅归档。
+       * 读不到（无 localStorage / 键不存在 / 服务在 iframe 外）就当 `default`，
+       * 也就是插件改动前的可见集合。
+       * @returns {'default'|'show'|'only'} 归档筛选模式。
+       */
+      function archivedFilterOf() {
+        try {
+          if (typeof window === 'undefined' || window.localStorage === undefined) return 'default';
+          return archivedFilterOfRaw(window.localStorage.getItem(HOST_VIEW_STORE_KEY));
+        } catch {
+          return 'default';
+        }
+      }
+
+      /**
        * 从 Workspace 快照取出「宿主已归档」的会话 id 集。
        * 快照缺失或形状不认识时给空集，调用方不必判空。
        * @param {any} workspaceSnapshot - `ctx.workspaces.list` 的快照。
@@ -983,11 +1371,26 @@
         return Array.isArray(ids) ? new Set(ids) : new Set();
       }
 
-      function buildPanelModel(state, sessionList, query, archivedIds) {
+      /**
+       * 面板模型：把会话快照按标签 / 未打标 / 最近窗口分组。
+       * 可见口径与宿主左栏「视图选项」的归档筛选保持一致。
+       * @param {any} state - 插件数据。
+       * @param {any} sessionList - `ctx.sessions.list` 快照。
+       * @param {string} query - 搜索词。
+       * @param {Set<string>} archivedIds - 宿主已归档会话 id。
+       * @param {Set<string>} pinnedIds - 宿主置顶会话 id。
+       * @param {'default'|'show'|'only'} [archivedFilter] - 宿主归档筛选；缺省 `default`。
+       * @returns {{groups: any[], total: number}|null} 面板模型；快照未就绪时 null。
+       */
+      function buildPanelModel(state, sessionList, query, archivedIds, pinnedIds, archivedFilter) {
         if (sessionList === null || sessionList === undefined) return null;
         if (sessionList.byId === null || typeof sessionList.byId !== 'object') return null;
 
         const hidden = archivedIds instanceof Set ? archivedIds : new Set();
+        /* 宿主「视图选项」的归档筛选：default 隐藏已归档、show 全部对话、only 仅归档。
+           面板不自己发明口径，逐字镜像左栏，避免「左栏看不见、面板却点得开」的错位。 */
+        const scope =
+          archivedFilter === 'only' ? 'only' : archivedFilter === 'show' ? 'show' : 'default';
         const ids = Array.isArray(sessionList.ids) ? sessionList.ids : [];
         const needle = typeof query === 'string' ? query.trim().toLowerCase() : '';
         const rows = [];
@@ -1001,9 +1404,10 @@
           /* 子代理会话不上架：宿主左栏的 sessionVisible 同样按 origin 过滤，
              这里镜像同一规则，否则标签面板会列出一堆只属于某个父会话的子智能体。 */
           if (summary.origin === 'subagent') continue;
-          /* 宿主已归档的会话同样不上架：它们不在左栏，`openSession` 也进不去
-             （宿主会把主面板清成空白），列在这里只会变成「点一下就空」的陷阱。 */
-          if (hidden.has(id)) continue;
+          /* 宿主已归档的会话：default 下不上架（它们不在左栏，`openSession` 也进不去，
+             宿主会把主面板清成空白）；show / only 下随宿主一起露出，行上会置灰并标记。 */
+          const archived = hidden.has(id);
+          if (scope === 'only' ? !archived : scope === 'default' ? archived : false) continue;
           seen.add(id);
           const title =
             typeof summary.displayTitle === 'string' && summary.displayTitle !== ''
@@ -1014,6 +1418,7 @@
             title: title,
             updatedAt: Number(summary.updatedAt) || 0,
             running: summary.running === true,
+            archived: archived,
             due: dueOf(state, id),
             tags: tagsOf(state, id)
           });
@@ -1041,6 +1446,32 @@
         };
         const sortRows = function (list) {
           return list.slice().sort(function (a, b) {
+            return b.updatedAt - a.updatedAt;
+          });
+        };
+        /* 「最近」分区不是标签，但它横跨多个标签：行序跟随左栏的槽位排序，
+           同槽内仍按最近活动倒序；默认模式只把「存档」置底。 */
+        const sortRecent = function (list) {
+          const order = tagOrderOf(state);
+          const custom = order !== null;
+          const slots = custom
+            ? resolveSlots(state, order).filter(function (slot) {
+                return slot !== RECENT_KEY;
+              })
+            : null;
+          const pinned = pinnedIds instanceof Set ? pinnedIds : new Set();
+          const rank = function (row) {
+            if (!custom) {
+              return archiveLastOn(state) && row.tags.indexOf(ARCHIVE) >= 0 ? 1 : 0;
+            }
+            const slot = slotOfSession(row.id, row.tags, pinned, slots);
+            const index = slots.indexOf(slot);
+            return index < 0 ? slots.length : index;
+          };
+          return list.slice().sort(function (a, b) {
+            const ra = rank(a);
+            const rb = rank(b);
+            if (ra !== rb) return ra - rb;
             return b.updatedAt - a.updatedAt;
           });
         };
@@ -1094,7 +1525,7 @@
            会话按最近活动倒序。它自己会随时间收敛，不会像「未打标」那样无限长。 */
         const hours = recentHoursOf(state);
         const windowStart = Date.now() - hours * 3600 * 1000;
-        const recentRows = sortRows(
+        const recentRows = sortRecent(
           filter(function (row) {
             return row.running || row.updatedAt >= windowStart;
           })
@@ -1113,16 +1544,48 @@
         }
 
         /* 浏览态保留「待办 / 存档」两个组头（即使为空），让分类骨架稳定；
-           搜索态只保留有命中的组，避免一堆 0 计数干扰。 */
+           搜索态只保留有命中的组，避免一堆 0 计数干扰。
+           自定义排序时分组顺序跟随槽位表（「最近」也能被搬位置）。 */
+        const visible =
+          needle === ''
+            ? groups
+            : groups.filter(function (group) {
+                return group.rows.length > 0;
+              });
         return {
-          groups:
-            needle === ''
-              ? groups
-              : groups.filter(function (group) {
-                  return group.rows.length > 0;
-                }),
+          groups: orderGroups(state, visible),
           total: rows.length
         };
+      }
+
+      /**
+       * 标签面板的分组顺序跟随自定义槽位表：
+       * `__recent__` 对应「最近」分区，`__untagged__` 对应未打标组，其余按标签名。
+       * 旧数组没有「最近」槽时保持它最前，升级前后观感不变。
+       */
+      function orderGroups(state, groups) {
+        const order = tagOrderOf(state);
+        if (order === null) return groups;
+        const slots = resolveSlots(state, order);
+        const recentIndex = slots.indexOf(RECENT_KEY);
+        const rank = function (group) {
+          let key = group.key;
+          if (key === RECENT_KEY) return recentIndex < 0 ? -1 : recentIndex;
+          if (key === UNTAGGED_KEY) key = UNTAGGED_SLOT;
+          const index = slots.indexOf(key);
+          return index < 0 ? slots.length : index;
+        };
+        return groups
+          .map(function (group, index) {
+            return { group: group, index: index, rank: rank(group) };
+          })
+          .sort(function (a, b) {
+            if (a.rank !== b.rank) return a.rank - b.rank;
+            return a.index - b.index;
+          })
+          .map(function (item) {
+            return item.group;
+          });
       }
 
       /* ------------------------------------------------------------------ *
@@ -1377,17 +1840,20 @@
       }
 
       /**
-       * 「通用设置」第二行：左栏单列表的「存档标签置底」开关。
+       * 「通用设置」第二行：左栏标签排序。
+       * 默认模式给「存档置底」开关；自定义模式显示槽位摘要与编辑入口。
        * 只改视觉排序，不写宿主的手动排序顺序，也不碰归档 / 置顶。
        */
-      function ArchiveLastSetting() {
+      function OrderSetting() {
         const app = useApp();
+        const custom = tagOrderOf(app.data) !== null;
         const on = archiveLastOn(app.data);
+        const summary = orderSummary(app.data);
         return h(
           'div',
           {
             className: 'stl_set',
-            'data-plugin-setting': ROW_ID + '.archive-last',
+            'data-plugin-setting': ROW_ID + '.order',
             'data-plugin-package': PLUGIN_PACKAGE
           },
           h(
@@ -1406,22 +1872,242 @@
                   T('row.badge')
                 )
               ),
-              h('div', { className: 'stl_setDesc' }, T('order.desc'))
+              h('div', { className: 'stl_setDesc', title: summary }, summary)
             ),
             h(
-              'button',
-              {
-                type: 'button',
-                role: 'switch',
-                'aria-checked': on,
-                'aria-label': T(on ? 'order.disable' : 'order.enable'),
-                className: on ? 'stl_setSwitch stl_setOn' : 'stl_setSwitch',
-                onClick: function () {
-                  setArchiveLast(!on);
-                }
-              },
-              h('span', { className: 'stl_setThumb' })
+              'div',
+              { className: 'stl_setActions' },
+              custom
+                ? null
+                : h(
+                    'button',
+                    {
+                      type: 'button',
+                      role: 'switch',
+                      'aria-checked': on,
+                      'aria-label': T(on ? 'order.disable' : 'order.enable'),
+                      className: on ? 'stl_setSwitch stl_setOn' : 'stl_setSwitch',
+                      onClick: function () {
+                        setArchiveLast(!on);
+                      }
+                    },
+                    h('span', { className: 'stl_setThumb' })
+                  ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'stl_textBtn',
+                  onClick: openOrder
+                },
+                custom ? T('order.edit') : T('order.customize')
+              )
             )
+          )
+        );
+      }
+
+      /* ---------------------------- 排序弹窗 ---------------------------- */
+
+      /**
+       * 左栏标签排序编辑器：槽位上下移即可调整「置顶 / 标签 / 未打标」的先后。
+       * 默认模式先给一段说明和一个「启用自定义排序」入口，避免误触改变列表。
+       */
+      function OrderEditor() {
+        const app = useApp();
+        const open = app.ui.order === true;
+        const order = tagOrderOf(app.data);
+        const custom = order !== null;
+        const slots = custom ? resolveSlots(app.data, order) : [];
+        /* 旧数组没有「最近」槽（升级前保存的），编辑时临时补在最前，
+           用户一动就会把「最近」写进配置。 */
+        if (custom && slots.indexOf(RECENT_KEY) < 0) slots.unshift(RECENT_KEY);
+
+        React.useEffect(
+          function () {
+            if (!open) return undefined;
+            const onKey = function (event) {
+              if (event.key === 'Escape') closeOrder();
+            };
+            if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+              window.addEventListener('keydown', onKey);
+              return function () {
+                window.removeEventListener('keydown', onKey);
+              };
+            }
+            return undefined;
+          },
+          [open]
+        );
+
+        if (!open) return null;
+
+        const colorOfSlot = function (slot) {
+          if (slot === PINNED_SLOT) return 'var(--dsw-alias-brand-primary)';
+          if (slot === UNTAGGED_SLOT || slot === RECENT_KEY) return '';
+          return colorOf(app.data, slot);
+        };
+        const typeOfSlot = function (slot) {
+          if (slot === RECENT_KEY) return T('order.typeRecent');
+          if (slot === PINNED_SLOT) return T('order.typePinned');
+          if (slot === UNTAGGED_SLOT) return T('order.typeUntagged');
+          return T('order.typeTag');
+        };
+        const move = function (index, delta) {
+          const next = slots.slice();
+          const to = index + delta;
+          if (to < 0 || to >= next.length) return;
+          const item = next.splice(index, 1)[0];
+          next.splice(to, 0, item);
+          setTagOrder(next);
+        };
+
+        const rows = slots.map(function (slot, index) {
+          const color = colorOfSlot(slot);
+          const name = slotLabel(app.data, slot);
+          return h(
+            'div',
+            { className: 'stl_ordRow', key: slot },
+            h('span', {
+              className: 'stl_ordDot' + (color === '' ? ' stl_ordDotEmpty' : ''),
+              style: color === '' ? undefined : { background: color }
+            }),
+            h('span', { className: 'stl_ordName' }, name),
+            h('span', { className: 'stl_ordType' }, typeOfSlot(slot)),
+            h(
+              'div',
+              { className: 'stl_ordBtns' },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'stl_ordBtn',
+                  disabled: index === 0,
+                  title: fill(T('order.moveUp'), { name: name }),
+                  'aria-label': fill(T('order.moveUp'), { name: name }),
+                  onClick: function () {
+                    move(index, -1);
+                  }
+                },
+                '↑'
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'stl_ordBtn',
+                  disabled: index === slots.length - 1,
+                  title: fill(T('order.moveDown'), { name: name }),
+                  'aria-label': fill(T('order.moveDown'), { name: name }),
+                  onClick: function () {
+                    move(index, 1);
+                  }
+                },
+                '↓'
+              )
+            )
+          );
+        });
+
+        return portalToBody(
+          h(
+            'div',
+            {
+              className: 'stl_backdrop',
+              onMouseDown: function (event) {
+                if (event.target === event.currentTarget) closeOrder();
+              }
+            },
+          h(
+            'div',
+            {
+              className: 'stl_dialog',
+              role: 'dialog',
+              'aria-modal': 'true',
+              'aria-label': T('order.title')
+            },
+            h(
+              'div',
+              { className: 'stl_dhead' },
+              h(
+                'div',
+                { className: 'stl_dtitles' },
+                h('div', { className: 'stl_dtitle' }, T('order.title')),
+                h('div', { className: 'stl_dsub' }, custom ? T('order.hint') : T('order.newTagHint'))
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'stl_icon',
+                  title: T('order.close'),
+                  'aria-label': T('order.close'),
+                  onClick: closeOrder
+                },
+                '×'
+              )
+            ),
+            h(
+              'div',
+              { className: 'stl_dbody' },
+              custom
+                ? h(
+                    'div',
+                    null,
+                    h('div', { className: 'stl_ordList' }, rows),
+                    h(
+                      'div',
+                      { className: 'stl_hint', style: { marginTop: '10px' } },
+                      T('order.recentHint')
+                    ),
+                    h(
+                      'div',
+                      { className: 'stl_hint', style: { marginTop: '4px' } },
+                      T('order.dragHint')
+                    )
+                  )
+                : h('div', { className: 'stl_ordIntro' }, T('order.intro'))
+            ),
+            h(
+              'div',
+              { className: 'stl_dfoot' },
+              custom
+                ? h(
+                    'div',
+                    { className: 'stl_ordFoot' },
+                    h(
+                      'button',
+                      { type: 'button', className: 'stl_textBtn', onClick: resetTagOrder },
+                      T('order.reset')
+                    ),
+                    h(
+                      'button',
+                      { type: 'button', className: 'stl_primary', onClick: closeOrder },
+                      T('order.done')
+                    )
+                  )
+                : h(
+                    'div',
+                    { className: 'stl_ordFoot' },
+                    h(
+                      'button',
+                      { type: 'button', className: 'stl_textBtn', onClick: closeOrder },
+                      T('order.close')
+                    ),
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'stl_primary',
+                        onClick: function () {
+                          setTagOrder(defaultOrderPreset(app.data));
+                        }
+                      },
+                      T('order.start')
+                    )
+                  )
+            )
+          )
           )
         );
       }
@@ -1778,7 +2464,17 @@
 
         if (!app.ui.panel) return null;
 
-        const model = buildPanelModel(app.data, sessionList, query, archivedIdsOf(workspaceSnapshot));
+        /* 宿主的归档筛选只落在左栏的 viewing store 里：每次渲染读一次，
+           面板每次打开都拿到最新口径。面板自身不写宿主状态，只跟随。 */
+        const archivedFilter = archivedFilterOf();
+        const model = buildPanelModel(
+          app.data,
+          sessionList,
+          query,
+          archivedIdsOf(workspaceSnapshot),
+          pinnedIdsOfSnapshot(workspaceSnapshot),
+          archivedFilter
+        );
         const nowMs = Date.now();
 
         const searchingNow = query.trim() !== '';
@@ -1787,27 +2483,35 @@
         const renderRow = function (row, groupName) {
           const dueInfo = row.due === '' ? null : formatDue(row.due);
           const quick = quickId === row.id;
+          /* 归档行随宿主筛选露出：置灰 + 行内标记，点击时先取消归档再打开，
+             不制造「点一下就空面板」的陷阱。 */
+          const openRow = function () {
+            if (row.archived) openArchivedSession(row.id);
+            else openSession(row.id);
+          };
+          const rowHint = row.archived ? T('panel.archivedHint') : row.title;
           return h(
             'div',
             { key: row.id, className: 'stl_srowWrap' },
             h(
               'div',
               {
-                className: 'stl_srow',
+                className: 'stl_srow' + (row.archived ? ' stl_srowArchived' : ''),
                 role: 'button',
                 tabIndex: 0,
-                title: row.title,
-                onClick: function () {
-                  openSession(row.id);
-                },
+                title: rowHint,
+                onClick: openRow,
                 onKeyDown: function (event) {
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
-                    openSession(row.id);
+                    openRow();
                   }
                 }
               },
               h('span', { className: 'stl_stitle', title: row.title }, row.title),
+              row.archived
+                ? h('span', { className: 'stl_sarch', title: T('panel.archivedHint') }, T('panel.archived'))
+                : null,
               row.tags
                 .filter(function (name) {
                   return name !== groupName;
@@ -1984,6 +2688,10 @@
         const hasRows = groups.some(function (group) {
           return group.rows.length > 0;
         });
+        /* 「仅显示已归档」下的空态不是「还没打过标签」：说清楚当前口径，
+           否则用户会以为标签面板坏了或筛选没生效。 */
+        const emptyIdleText =
+          archivedFilter === 'only' ? T('panel.emptyArchivedOnly') : T('panel.emptyIdle');
         const treeBody =
           model === null
             ? h('div', { className: 'stl_empty' }, T('panel.loading'))
@@ -1993,7 +2701,7 @@
                 : groups.map(renderGroup)
               : hasRows
                 ? groups.map(renderGroup)
-                : h('div', { className: 'stl_empty' }, T('panel.emptyIdle'));
+                : h('div', { className: 'stl_empty' }, emptyIdleText);
 
         /* 标签页视图：tab 直接复用分组序列（最近 → 待办 → 存档 → 自定义 → 未打标）。
            搜索态 buildPanelModel 已过滤空组；浏览态保留空的待办/存档骨架。 */
@@ -2070,7 +2778,7 @@
               ? h(
                   'div',
                   { className: 'stl_empty' },
-                  searchingNow ? T('panel.empty') : T('panel.emptyIdle')
+                  searchingNow ? T('panel.empty') : emptyIdleText
                 )
               : activeGroup === null
                 ? h('div', { className: 'stl_empty' }, T('panel.empty'))
@@ -2111,7 +2819,22 @@
               h(
                 'div',
                 { className: 'stl_dtitles' },
-                h('div', { className: 'stl_dtitle', title: T('panel.guide') }, T('panel.heading'))
+                h('div', { className: 'stl_dtitle', title: T('panel.guide') }, T('panel.heading')),
+                archivedFilter === 'default'
+                  ? null
+                  : h(
+                      'span',
+                      {
+                        className: 'stl_dfilter',
+                        title: fill(T('panel.filterHint'), {
+                          mode:
+                            archivedFilter === 'only'
+                              ? T('panel.filterOnly')
+                              : T('panel.filterShow')
+                        })
+                      },
+                      archivedFilter === 'only' ? T('panel.filterOnly') : T('panel.filterShow')
+                    )
               ),
               h(
                 'div',
@@ -2331,7 +3054,7 @@
         '.stl_due{font-size:11px;color:var(--dsw-alias-label-tertiary);flex:none}',
         '.stl_dueLate{color:var(--dsw-alias-state-error-primary)}',
 
-        '.stl_backdrop{position:fixed;inset:0;z-index:1000;display:flex;align-items:flex-start;justify-content:center;padding:10vh 16px 16px;background:rgba(0,0,0,.42);pointer-events:auto}',
+        '.stl_backdrop{position:fixed;inset:0;z-index:1200;display:flex;align-items:flex-start;justify-content:center;padding:10vh 16px 16px;background:rgba(0,0,0,.42);pointer-events:auto}',
         '.stl_dialog{display:flex;flex-direction:column;width:min(500px,94vw);max-height:74vh;background:var(--dsw-alias-bg-overlay);border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;box-shadow:0 16px 40px rgba(0,0,0,.38);color:var(--dsw-alias-label-primary);font-size:var(--dsh-title-font-size,13px);overflow:hidden}',
         '.stl_dialogWide{width:min(760px,94vw);max-height:82vh}',
         '.stl_dhead{display:flex;align-items:flex-start;gap:10px;padding:12px 14px 10px;border-bottom:.5px solid var(--dsw-alias-border-l1);flex:none}',
@@ -2416,6 +3139,12 @@
         '.stl_srow{position:relative;display:flex;align-items:center;gap:6px;width:100%;height:30px;padding:0 8px;border:0;background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;cursor:pointer;border-radius:5px;text-align:left}',
         '.stl_srow:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
         '.stl_srow:focus-visible{outline:1px solid var(--dsw-alias-border-l2);outline-offset:-1px}',
+        /* 归档行：与宿主左栏一致地置灰，并给一个行内「已归档」标记。 */
+        '.stl_srowArchived{color:var(--dsw-alias-label-tertiary)}',
+        '.stl_srowArchived .stl_stitle{opacity:.72}',
+        '.stl_srowArchived:hover{color:var(--dsw-alias-label-secondary)}',
+        '.stl_sarch{flex:none;padding:0 5px;border-radius:7px;border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:15px;white-space:nowrap}',
+        '.stl_dfilter{display:inline-block;margin-left:8px;padding:0 6px;border-radius:8px;border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-weight:400;vertical-align:1px;white-space:nowrap}',
         '.stl_srowWrap{display:flex;flex-direction:column}',
         '.stl_rowAct{position:absolute;right:6px;top:50%;transform:translateY(-50%);opacity:0;width:20px;height:20px;border:0;border-radius:4px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary);font:inherit;font-size:15px;line-height:1;cursor:pointer;padding:0;z-index:1}',
         '.stl_srowWrap:hover .stl_rowAct,.stl_srowWrap:focus-within .stl_rowAct,.stl_rowAct:focus-visible{opacity:1}',
@@ -2450,10 +3179,23 @@
         '.stl_setSwitch.stl_setOn{background:var(--dsw-alias-brand-primary)}',
         '.stl_setThumb{width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-switch-thumb);transition:transform .15s ease}',
         '.stl_setSwitch.stl_setOn .stl_setThumb{transform:translateX(16px)}',
-        /* 左栏单列表：把带「存档」标签的行排到末尾（只改视觉顺序，不动宿主状态）。 */
+        /* 左栏单列表：槽位排序只改视觉顺序，不动宿主状态。 */
         '.stl_flatOrder{display:flex;flex-direction:column}',
         '.stl_flatOrder>*{flex:0 0 auto}',
-        '.stl_flatOrder>*[data-stl-foot]{order:1}'
+        /* 排序弹窗：槽位行 + 上下移。 */
+        '.stl_setActions{display:flex;align-items:center;gap:8px;flex:none}',
+        '.stl_ordList{display:flex;flex-direction:column;gap:3px}',
+        '.stl_ordRow{display:flex;align-items:center;gap:8px;min-height:34px;padding:2px 8px;border-radius:5px;background:var(--dsw-alias-bg-layer-1);border:.5px solid var(--dsw-alias-border-l1)}',
+        '.stl_ordDot{width:7px;height:7px;border-radius:50%;flex:none}',
+        '.stl_ordDotEmpty{border:.5px solid var(--dsw-alias-label-tertiary)}',
+        '.stl_ordName{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}',
+        '.stl_ordType{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary)}',
+        '.stl_ordBtns{display:flex;align-items:center;gap:2px;flex:none}',
+        '.stl_ordBtn{width:22px;height:22px;border:0;border-radius:4px;background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;cursor:pointer;padding:0}',
+        '.stl_ordBtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+        '.stl_ordBtn:disabled{opacity:.35;cursor:default}',
+        '.stl_ordIntro{padding:16px 8px;text-align:center;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px}',
+        '.stl_ordFoot{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:1}'
       ].join('\n');
 
       /* ------------------------------------------------------------------ *
@@ -2545,12 +3287,12 @@
         ctx.slots.inject('settings.general.item', function () {
           return ctx.slots.register(
             { name: 'settings.general.item', id: 'session-tag-lite-order', order: SETTINGS_ORDER + 1, locale: NS },
-            ArchiveLastSetting
+            OrderSetting
           );
         });
 
-        /* 左栏单列表的置底标记：宿主渲染完才存在，靠 MutationObserver 补标。
-           只观察 childList（不观察 attributes），插件自己写 data-stl-foot 不会自喂。 */
+        /* 左栏单列表的排序标记：宿主渲染完才存在，靠 MutationObserver 补标。
+           只观察 childList（不观察 attributes），插件自己写 style.order 不会自喂。 */
         ctx.effect(function () {
           if (typeof document === 'undefined' || typeof MutationObserver !== 'function') {
             return function () {};
@@ -2578,8 +3320,7 @@
               orderFrame = 0;
             }
             for (const tree of Array.from(document.querySelectorAll('.' + FLAT_ORDER_CLASS))) {
-              tree.classList.remove(FLAT_ORDER_CLASS);
-              for (const child of Array.from(tree.children)) child.removeAttribute(ROW_FOOT_ATTR);
+              clearTreeOrder(tree);
             }
           };
         }, 'session-tag-lite: sidebar order');
@@ -2603,6 +3344,14 @@
           return ctx.slots.register(
             { name: 'shell.overlay', id: 'session-tag-lite-panel', order: 61, locale: NS },
             Panel
+          );
+        });
+
+        /* 浮层：左栏标签排序编辑器。 */
+        ctx.slots.inject('shell.overlay', function () {
+          return ctx.slots.register(
+            { name: 'shell.overlay', id: 'session-tag-lite-order', order: 62, locale: NS },
+            OrderEditor
           );
         });
 
@@ -2670,7 +3419,20 @@
           setRowAction: setRowAction,
           archiveLastOn: archiveLastOn,
           setArchiveLast: setArchiveLast,
-          tagFootRank: tagFootRank,
+          tagOrderOf: tagOrderOf,
+          normalizeTagOrder: normalizeTagOrder,
+          resolveSlots: resolveSlots,
+          defaultOrderPreset: defaultOrderPreset,
+          slotLabel: slotLabel,
+          slotOfSession: slotOfSession,
+          orderValueOf: orderValueOf,
+          inRecentWindow: inRecentWindow,
+          orderSummary: orderSummary,
+          orderGroups: orderGroups,
+          setTagOrder: setTagOrder,
+          resetTagOrder: resetTagOrder,
+          PINNED_SLOT: PINNED_SLOT,
+          UNTAGGED_SLOT: UNTAGGED_SLOT,
           canonicalName: canonicalName,
           ARCHIVE: ARCHIVE,
           LEGACY_ARCHIVE: LEGACY_ARCHIVE,
@@ -2684,6 +3446,9 @@
           toggleCollapsed: toggleCollapsed,
           buildPanelModel: buildPanelModel,
           archivedIdsOf: archivedIdsOf,
+          archivedFilterOf: archivedFilterOf,
+          archivedFilterOfRaw: archivedFilterOfRaw,
+          HOST_VIEW_STORE_KEY: HOST_VIEW_STORE_KEY,
           menuLabel: function () {
             return T('menu.label');
           },

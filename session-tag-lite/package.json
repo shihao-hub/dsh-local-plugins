@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Lightweight front-end session tags: mark Sessions with free-form tags plus fixed 待办 / 存档 semantics, set a due date, and browse everything by tag in an overlay panel. In the flat Session list, Sessions tagged 存档 sink to the bottom. Only writes tags through the host's open seats; the left sidebar is never re-rendered. Data stays in the browser's localStorage.",
+  "description": "Lightweight front-end session tags: mark Sessions with free-form tags plus fixed 待办 / 存档 semantics, set a due date, and browse everything by tag in an overlay panel. In the flat Session list, a custom slot order puts pinned Sessions, any tag, and untagged Sessions wherever you like. Only writes tags through the host's open seats; the left sidebar is never re-rendered. Data stays in the browser's localStorage.",
   "icon": "./icon.svg",
   "exports": {
     ".": "./index.js",

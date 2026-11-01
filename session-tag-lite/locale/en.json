@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Session Tags (Lite)",
-    "description": "Tag Sessions with a fixed 待办 / 存档 pair, free-form tags and a shared tag pool, plus a due date, then browse Sessions by tag in an overlay panel. In the flat Session list, Sessions tagged 存档 sink to the bottom. The left sidebar is left untouched and the data stays in this browser."
+    "description": "Tag Sessions with a fixed 待办 / 存档 pair, free-form tags and a shared tag pool, plus a due date, then browse Sessions by tag in an overlay panel. In the flat Session list, order pinned Sessions, any tag, and untagged Sessions however you like. The left sidebar is left untouched and the data stays in this browser."
   }
 }
