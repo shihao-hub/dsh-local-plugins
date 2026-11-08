@@ -70,6 +70,29 @@ check('副标题标记属性', () => test.LABEL_ATTR === 'data-swl-label');
 check('样式标签 id', () => test.STYLE_TAG_ID === '@local/session-workspace-label/rows.css');
 check('存储键', () => test.STORE_KEY === 'session-workspace-label.mode');
 
+// ---- 设置行说明（模式 × 当前视图） ------------------------------------------
+
+check('说明 key 覆盖每个模式', () => test.MODES.every((mode) => typeof test.MODE_HINT_KEYS[mode] === 'string'));
+check('all 模式说明', () => test.modeHintKey('all', false) === 'mode.hint.all');
+check('flat + 单列表说明', () => test.modeHintKey('flat', true) === 'mode.hint.flat');
+check('flat + 分组视图说明', () => test.modeHintKey('flat', false) === 'mode.hint.grouped');
+check('off 模式说明', () => test.modeHintKey('off', true) === 'mode.hint.off');
+check('脏模式回落默认', () => test.modeHintKey('nope', false) === 'mode.hint.grouped');
+check('中英字典键集一致', () => {
+  const zhKeys = Object.keys(test.zh).sort();
+  const enKeys = Object.keys(test.en).sort();
+  return JSON.stringify(zhKeys) === JSON.stringify(enKeys);
+});
+check('四条说明文案中英都非空', () =>
+  ['mode.hint.all', 'mode.hint.flat', 'mode.hint.grouped', 'mode.hint.off'].every(
+    (key) =>
+      typeof test.zh[key] === 'string' &&
+      test.zh[key] !== '' &&
+      typeof test.en[key] === 'string' &&
+      test.en[key] !== ''
+  )
+);
+
 // ---- CSS 契约 --------------------------------------------------------------
 
 check('CSS 抬高带标记的行', () => /\[data-swl\]\s*\{[^}]*height:\s*46px/s.test(test.CSS));
@@ -89,6 +112,8 @@ check('CSS 胶囊自身可点（父级 none 不传染）', () => /\.swl_alias\s*
 check('CSS 空态用「+」提示', () => /\.swl_alias\[data-empty\]::after\s*\{[^}]*content:\s*"?\+"?/s.test(test.CSS));
 check('CSS 空态默认不收事件', () => /\.swl_alias\[data-empty\]\s*\{[^}]*pointer-events:\s*none/s.test(test.CSS));
 check('CSS 行 hover 才放空态出头', () => /:hover\s+\.swl_alias\[data-empty\]/.test(test.CSS));
+check('CSS 有设置说明行', () => /\.swl_hint\s*\{/.test(test.CSS));
+check('CSS 选中态用品牌色区分 hover', () => /\.swl_choiceActive\s*\{[^}]*brand-primary/s.test(test.CSS));
 
 // ---- 会话标识契约 ----------------------------------------------------------
 

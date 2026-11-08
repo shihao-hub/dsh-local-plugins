@@ -102,6 +102,13 @@
 
       const MODES = ['all', 'flat', 'off'];
       const DEFAULT_MODE = 'flat';
+      /** 设置行说明：模式 + 当前视图 → 字典 key（见 modeHintKey）。 */
+      const MODE_HINT_KEYS = {
+        all: 'mode.hint.all',
+        flat: 'mode.hint.flat',
+        grouped: 'mode.hint.grouped',
+        off: 'mode.hint.off'
+      };
 
       /** 与宿主 12px 轮廓图标同族的文件夹图标（currentColor，随主题走）。 */
       const ICON =
@@ -208,18 +215,24 @@
         '.swl_choices{display:flex;align-items:center;gap:4px;flex:none;padding:2px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px}',
         '.swl_choice{padding:3px 10px;border:0;border-radius:6px;background:none;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap}',
         '.swl_choice:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-        '.swl_choice.swl_choiceActive{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+        '.swl_choice.swl_choiceActive{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 16%,transparent);color:var(--dsw-alias-label-primary);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--dsw-alias-brand-primary) 40%,transparent)}',
+        '/* 说明行：讲清当前选项在单列表 / 分组视图下的实际效果，避免「以为只在单列表生效」。 */',
+        '.swl_hint{color:var(--dsw-alias-label-tertiary);font-size:11.5px;line-height:17px}',
         ''
       ].join('\n');
 
       const zh = {
-        'row.title': '会话行工作区副标题',
+        'row.title': '会话行工作区副标题与会话标识',
         'row.badge': '插件',
         'row.badgeTitle': '由插件 {package} 提供',
-        'row.description': '在单列表模式的会话标题下方显示所属工作区（参考 agy 会话列表），右侧可挂一个会话标识；分组视图默认不显示，避免与组头重复',
-        'mode.all': '所有视图',
-        'mode.flat': '仅单列表',
+        'row.description': '在会话标题下方显示所属工作区（参考 agy 会话列表），右侧可挂一个会话标识。默认只在单列表显示；想让按工作区 / 按工作区树也显示，选「所有视图（分组也显示）」。',
+        'mode.all': '所有视图（分组也显示）',
+        'mode.flat': '仅单列表（默认）',
         'mode.off': '关闭',
+        'mode.hint.all': '单列表、按工作区、按工作区树都会显示工作区副标题与会话标识。',
+        'mode.hint.flat': '当前侧栏是单列表，正在显示；切到按工作区后不再显示。',
+        'mode.hint.grouped': '当前侧栏是分组视图，所以看不到；改选「所有视图（分组也显示）」即可显示。',
+        'mode.hint.off': '侧栏不显示工作区副标题与会话标识。',
         'label.ungrouped': '未分组',
         'menu.label': '设置会话标识',
         'chip.empty': '设置会话标识',
@@ -246,13 +259,17 @@
         'migrate.close': '关闭'
       };
       const en = {
-        'row.title': 'Workspace subtitle on session rows',
+        'row.title': 'Workspace subtitle & session label',
         'row.badge': 'Plugin',
         'row.badgeTitle': 'Provided by plugin {package}',
-        'row.description': 'Shows each session\'s Workspace under its title in the flat list (like the agy session list), with an optional session label on the right; grouped views hide it by default so the group header is not repeated',
-        'mode.all': 'All views',
-        'mode.flat': 'Flat list only',
+        'row.description': 'Shows each session\'s Workspace under its title (like the agy session list), with an optional session label on the right. It only paints in the flat list by default; pick "All views (grouped too)" to show it under By workspace / By workspace tree as well.',
+        'mode.all': 'All views (grouped too)',
+        'mode.flat': 'Flat list only (default)',
         'mode.off': 'Off',
+        'mode.hint.all': 'The subtitle and session label are shown in the flat list, By workspace and By workspace tree.',
+        'mode.hint.flat': 'The sidebar is a flat list right now, so they are visible; switching to By workspace hides them.',
+        'mode.hint.grouped': 'The sidebar is grouped right now, so they are hidden; pick "All views (grouped too)" to show them.',
+        'mode.hint.off': 'The subtitle and session label are hidden everywhere.',
         'label.ungrouped': 'Ungrouped',
         'menu.label': 'Set session label',
         'chip.empty': 'Set session label',
@@ -407,6 +424,19 @@
           if (typeof id === 'string' && id !== '' && entry !== null) legacy[id] = entry;
         }
         return { aliases: aliases, tokens: tokens, legacy: legacy };
+      }
+
+      /**
+       * 设置行说明的字典 key。
+       * `flat` 模式下区分「当前就是单列表」与「当前是分组视图」：
+       * 后者正是用户最容易误判成「插件只在单列表生效」的场景，文案要直接告诉他怎么打开。
+       * 脏模式值按默认值处理；无 document 时 isFlat 传 true（测试环境）。
+       */
+      function modeHintKey(mode, isFlat) {
+        const normalized = MODES.indexOf(mode) === -1 ? DEFAULT_MODE : mode;
+        if (normalized === 'all') return MODE_HINT_KEYS.all;
+        if (normalized === 'off') return MODE_HINT_KEYS.off;
+        return isFlat ? MODE_HINT_KEYS.flat : MODE_HINT_KEYS.grouped;
       }
 
       // ---- 持久化 ----------------------------------------------------------
@@ -740,6 +770,7 @@
 
       /** 当前是否处于单列表视图（宿主 flat 列表容器的类名后缀是 `_flatList`）。 */
       function isFlatView() {
+        if (typeof document === 'undefined') return true;
         return document.querySelector('[class*="_flatList"]') !== null;
       }
 
@@ -910,6 +941,8 @@
               )
             )
           ),
+          /* 当前选项在“此刻这个侧栏”下的实际效果：分组视图下直接告诉用户怎么打开。 */
+          h('div', { className: 'swl_hint' }, T(modeHintKey(mode, isFlatView()))),
           h(
             'div',
             { className: 'swl_actions' },
@@ -1449,7 +1482,7 @@
             {
               name: 'settings.general.item',
               id: ROW_ID,
-              order: 16,
+              order: 17,
               locale: NS
             },
             WorkspaceLabelRow
@@ -1469,6 +1502,10 @@
           ROW_SELECTOR: ROW_SELECTOR,
           MODES: MODES,
           DEFAULT_MODE: DEFAULT_MODE,
+          MODE_HINT_KEYS: MODE_HINT_KEYS,
+          modeHintKey: modeHintKey,
+          zh: zh,
+          en: en,
           CSS: CSS,
           baseName: baseName,
           workspaceTitles: workspaceTitles,
