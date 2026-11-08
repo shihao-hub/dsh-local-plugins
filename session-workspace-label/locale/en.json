@@ -1,5 +1,6 @@
 {
   "meta": {
-    "title": "Session workspace subtitle"
+    "title": "Session workspace subtitle",
+    "description": "Adds an agy-style gray workspace name under every session title, with an optional session label on the right; it can also migrate hand-written 【xx】 title prefixes into those labels in one pass."
   }
 }

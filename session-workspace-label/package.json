@@ -1,9 +1,9 @@
 {
   "name": "@local/session-workspace-label",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
-  "description": "Shows each sidebar session's Workspace as a small subtitle under its title (agy-style), so the flat 'in one list' view can tell mixed sessions apart.",
+  "description": "Shows each sidebar session's Workspace as a small subtitle under its title (agy-style), plus an optional per-session label chip on the right; also migrates hand-written 【xx】 title prefixes into those labels in one pass.",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -17,6 +17,7 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
+    "alias.png",
     "README.md"
   ],
   "dsh": {
