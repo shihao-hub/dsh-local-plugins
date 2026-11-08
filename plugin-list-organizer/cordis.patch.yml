@@ -1,0 +1,3 @@
+- insert:
+    - id: plugin-list-organizer
+      name: '@local/plugin-list-organizer'

@@ -1,9 +1,9 @@
 {
-  "name": "@local/plugin-source-tabs",
-  "version": "1.0.0",
+  "name": "@local/plugin-list-organizer",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "Splits the installed plugins list into Local and Downloaded tabs, opening on Local by default.",
+  "description": "Organizes the installed plugins list: Local/Downloaded source tabs, opening on Local by default, plus enabled plugins listed first.",
   "icon": "./icon.svg",
   "exports": {
     ".": "./index.js",

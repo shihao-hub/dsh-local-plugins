@@ -1,5 +1,5 @@
 /**
- * Client half of the plugin-source-tabs bundle.
+ * Client half of the plugin-list-organizer bundle.
  *
  * 插件管理器页面的「已安装插件」分组把两类来源混在同一个列表里：本地插件
  * （profile 用 `link:` 指向工作区、本仓库一律以 `@local/` 发布的包）和从
@@ -7,35 +7,44 @@
  * 分栏（本地 / 下载），默认选中本地，只显示对应来源的卡片；选择会记住，下次
  * 打开页面沿用。
  *
+ * 同一次就地增强还负责列表顺序：已启用（含报错中）的卡片排在前，未启用的
+ * 排在后。排序**不移动 DOM 节点**——宿主 `<ul>` 是纵向 flex 容器，给卡片写
+ * 一个分档属性、由本插件自己的 CSS 换算成 `order` 即可；同档内 `order` 相同，
+ * flex 按文档顺序落位，所以宿主原有顺序在每一档内部被完整保留。好处是 React
+ * 的 fiber/节点对应关系不受影响，刷新时宿主怎么重建列表都不会错位。
+ *
  * 实现取向：宿主没有为这份列表开放可扩展的渲染座位（`plugins.tab` 只允许
  * 第三方**整块替换**分组，拿不到宿主自己的卡片、开关与跳转），因此这里沿用
  * 本仓库既有的做法——以宿主提供的稳定 DOM 锚点（`section[data-plugin-group=
  * "bundles"]` 与 `li[data-plugin-package]`）做就地增强：不改宿主代码、不复制
- * 宿主组件，只加自己的分栏条、自己的样式，以及卡片上的一个隐藏属性。
+ * 宿主组件，只加自己的分栏条、自己的样式，以及卡片上的两个隐藏属性。
  *
  * 与宿主共存的约定：
- *   - 隐藏用 `data-plugin-source-hidden` 属性 + 一条 `display:none!important`
- *     规则，**不写 style/className**（那两项归 React 管，刷新时会被它覆盖）；
+ *   - 隐藏用 `data-plugin-list-hidden` 属性 + 一条 `display:none!important`
+ *     规则，排序用 `data-plugin-list-order` 属性 + 一条 `order` 规则，**不写
+ *     style/className**（那两项归 React 管，刷新时会被它覆盖）；
  *   - 每次刷新都先比对再写（属性相同就不 setAttribute），MutationObserver 因此
  *     不会被自己的写入反复唤醒；
- *   - 所有自有节点（分栏条、空态、样式表）在插件卸载时移除，卡片上的隐藏属性
+ *   - 所有自有节点（分栏条、空态、样式表）在插件卸载时移除，卡片上的两个属性
  *     一并还原，宿主页面回到原样。
  */
 (function () {
   'use strict';
 
   window.__ModuleLoader__.load({
-    id: '@local/plugin-source-tabs',
+    id: '@local/plugin-list-organizer',
     meta: {},
     factory: function () {
-      const PLUGIN_ID = '@local/plugin-source-tabs';
-      const NS = 'plugin-source-tabs';
-      const STORAGE_KEY = 'plugin-source-tabs.v1';
+      const PLUGIN_ID = '@local/plugin-list-organizer';
+      const NS = 'plugin-list-organizer';
+      const STORAGE_KEY = 'plugin-list-organizer.v1';
 
       /** 宿主「已安装插件」分组的锚点（插件管理器页面 renderGroup('bundles')）。 */
       const GROUP_SELECTOR = 'section[data-plugin-group="bundles"]';
       /** 分组里的组合包卡片；宿主把包名写在 data-plugin-package 上。 */
       const CARD_SELECTOR = 'li[data-plugin-package]';
+      /** 卡片上的启用状态：宿主 packageStatus() 写 running / disabled / problem。 */
+      const STATUS_ATTR = 'data-plugin-status';
 
       /**
        * 本地插件的判定：本仓库的本地插件一律以 `@local/` 发布，profile 用
@@ -43,14 +52,23 @@
        */
       const LOCAL_SCOPES = ['@local/'];
 
+      /**
+       * 算作「已启用」的宿主状态。`problem` 是宿主报错（加载失败 / 配置错误），
+       * 这类卡片通常开关仍是开的、且更需要被先看到，所以与 running 同档。
+       * 未知状态（宿主改版、属性缺失）一律落在后排：所有卡片同档时 order 相同，
+       * flex 退回文档顺序，等于没排序——宁可不动，也不猜。
+       */
+      const ENABLED_STATUSES = ['running', 'problem'];
+
       const TAB_LOCAL = 'local';
       const TAB_DOWNLOADED = 'downloaded';
 
-      const TAB_ATTR = 'data-plugin-source-tab';
-      const BAR_ATTR = 'data-plugin-source-bar';
-      const HIDDEN_ATTR = 'data-plugin-source-hidden';
-      const EMPTY_ATTR = 'data-plugin-source-empty';
-      const STYLE_ID = 'plugin-source-tabs-style';
+      const TAB_ATTR = 'data-plugin-list-tab';
+      const BAR_ATTR = 'data-plugin-list-bar';
+      const HIDDEN_ATTR = 'data-plugin-list-hidden';
+      const ORDER_ATTR = 'data-plugin-list-order';
+      const EMPTY_ATTR = 'data-plugin-list-empty';
+      const STYLE_ID = 'plugin-list-organizer-style';
 
       const zh = {
         'tabs.label': '插件来源',
@@ -81,22 +99,28 @@
        *     只改颜色 + 下划线；
        *   - 计数不再做成 pill：pill 与选中块同色时等于隐形，两个 tab 结构不一致。
        * 每个颜色都带主题变量 + 兜底值，主题变量缺失时仍能读出层级。
+       *
+       * 排序两条规则挂在自己的属性上，不用 `!important`：宿主的卡片没有任何
+       * order 声明，属性选择器的优先级足够压过它，也不会和卡片的 display 规则打架。
        */
       const CSS = [
-        '.pst-bar{position:relative;display:inline-flex;align-items:center;gap:4px;flex:none;margin:0 -8px 0 auto;}',
-        '.pst-tab{position:relative;appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;margin:0;padding:0 8px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#cfd3d6);font-family:inherit;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;transition:color .15s,background-color .15s;}',
-        '.pst-tab:hover{color:var(--dsw-alias-label-primary,#f9fafb);background:var(--dsw-alias-interactive-bg-hover,#ffffff0d);}',
-        '.pst-tab[aria-selected="true"]{color:var(--dsw-alias-label-primary,#f9fafb);}',
-        '.pst-tab:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#7aaaff));outline-offset:-2px;}',
-        '.pst-tab::after{content:"";position:absolute;left:8px;right:8px;bottom:4px;height:2px;border-radius:1px;background:currentColor;opacity:0;transform:scaleX(.5);transform-origin:center;transition:opacity .16s ease-out,transform .22s cubic-bezier(.2,0,0,1);}',
-        '.pst-tab[aria-selected="true"]::after{opacity:1;transform:scaleX(1);}',
-        '.pst-count{font-size:11px;font-weight:500;line-height:1;color:var(--dsw-alias-label-tertiary,#adb2b8);font-variant-numeric:tabular-nums;transform:translateY(-.5px);transition:color .15s;}',
-        '.pst-tab[aria-selected="true"] .pst-count{color:var(--dsw-alias-label-secondary,#cfd3d6);}',
-        '.pst-empty{margin:6px 8px 2px;color:var(--dsw-alias-label-tertiary,#adb2b8);font-size:13px;line-height:20px;}',
+        '.plo-bar{position:relative;display:inline-flex;align-items:center;gap:4px;flex:none;margin:0 -8px 0 auto;}',
+        '.plo-tab{position:relative;appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;margin:0;padding:0 8px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#cfd3d6);font-family:inherit;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;transition:color .15s,background-color .15s;}',
+        '.plo-tab:hover{color:var(--dsw-alias-label-primary,#f9fafb);background:var(--dsw-alias-interactive-bg-hover,#ffffff0d);}',
+        '.plo-tab[aria-selected="true"]{color:var(--dsw-alias-label-primary,#f9fafb);}',
+        '.plo-tab:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#7aaaff));outline-offset:-2px;}',
+        '.plo-tab::after{content:"";position:absolute;left:8px;right:8px;bottom:4px;height:2px;border-radius:1px;background:currentColor;opacity:0;transform:scaleX(.5);transform-origin:center;transition:opacity .16s ease-out,transform .22s cubic-bezier(.2,0,0,1);}',
+        '.plo-tab[aria-selected="true"]::after{opacity:1;transform:scaleX(1);}',
+        '.plo-count{font-size:11px;font-weight:500;line-height:1;color:var(--dsw-alias-label-tertiary,#adb2b8);font-variant-numeric:tabular-nums;transform:translateY(-.5px);transition:color .15s;}',
+        '.plo-tab[aria-selected="true"] .plo-count{color:var(--dsw-alias-label-secondary,#cfd3d6);}',
+        '.plo-empty{margin:6px 8px 2px;color:var(--dsw-alias-label-tertiary,#adb2b8);font-size:13px;line-height:20px;}',
         '[' + HIDDEN_ATTR + ']{display:none!important;}',
-        '.pst-fade{animation:pst-fade .16s ease-out;}',
-        '@keyframes pst-fade{from{opacity:0;}to{opacity:1;}}',
-        '@media (prefers-reduced-motion:reduce){.pst-tab::after{transition:none;}.pst-fade{animation:none;}}'
+        // 宿主的 ul 是 `display:flex; flex-direction:column`，order 才是文档顺序的稳定覆盖手段。
+        '[' + ORDER_ATTR + '="first"]{order:0;}',
+        '[' + ORDER_ATTR + '="last"]{order:1;}',
+        '.plo-fade{animation:plo-fade .16s ease-out;}',
+        '@keyframes plo-fade{from{opacity:0;}to{opacity:1;}}',
+        '@media (prefers-reduced-motion:reduce){.plo-tab::after{transition:none;}.plo-fade{animation:none;}}'
       ].join('\n');
 
       /** 当前分类；首次使用默认本地，之后沿用上次选择。 */
@@ -137,6 +161,22 @@
         return TAB_DOWNLOADED;
       }
 
+      /**
+       * 宿主启用状态 → 排序分档。running / problem 归 `first`；disabled
+       * 与任何未知值归 `last`（未知即不猜，见 ENABLED_STATUSES 的注释）。
+       */
+      function orderOf(status) {
+        return ENABLED_STATUSES.indexOf(status) === -1 ? 'last' : 'first';
+      }
+
+      /**
+       * 属性写入：值没变就不碰 DOM。MutationObserver 观察整个 body，
+       * 每次无条件 setAttribute 会把自己的写入当成新变更，陷入死循环。
+       */
+      function setAttr(element, name, value) {
+        if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+      }
+
       function labelKey(value) {
         return value === TAB_DOWNLOADED ? 'tab.downloaded' : 'tab.local';
       }
@@ -155,7 +195,7 @@
 
       function createBar() {
         const bar = document.createElement('div');
-        bar.className = 'pst-bar';
+        bar.className = 'plo-bar';
         bar.setAttribute(BAR_ATTR, '');
         bar.setAttribute('role', 'tablist');
         // 只做状态存档（调试与阅读器看得见当前分类），样式不再依赖它。
@@ -164,17 +204,17 @@
         for (const value of [TAB_LOCAL, TAB_DOWNLOADED]) {
           const button = document.createElement('button');
           button.type = 'button';
-          button.className = 'pst-tab';
+          button.className = 'plo-tab';
           button.setAttribute('role', 'tab');
           button.setAttribute(TAB_ATTR, value);
 
           const label = document.createElement('span');
-          label.className = 'pst-label';
-          label.setAttribute('data-pst-part', 'label');
+          label.className = 'plo-label';
+          label.setAttribute('data-plo-part', 'label');
 
           const count = document.createElement('span');
-          count.className = 'pst-count';
-          count.setAttribute('data-pst-part', 'count');
+          count.className = 'plo-count';
+          count.setAttribute('data-plo-part', 'count');
 
           button.append(label, count);
           bar.append(button);
@@ -277,10 +317,10 @@
         const group = document.querySelector(GROUP_SELECTOR);
         const list = group === null ? null : group.querySelector('ul');
         if (list === null) return;
-        list.classList.remove('pst-fade');
+        list.classList.remove('plo-fade');
         void list.offsetWidth; // 强制回流，让动画能从这一帧重新开始
-        list.classList.add('pst-fade');
-        list.addEventListener('animationend', () => list.classList.remove('pst-fade'), { once: true });
+        list.classList.add('plo-fade');
+        list.addEventListener('animationend', () => list.classList.remove('plo-fade'), { once: true });
       }
 
       /** 最近的可纵向滚动祖先。宿主把滚动放在 `section.X_2TxG_page` 上而不是
@@ -355,8 +395,8 @@
           const label = translate(labelKey(value));
           const count = String(value === TAB_DOWNLOADED ? counts.downloaded : counts.local);
 
-          const labelNode = button.querySelector('[data-pst-part="label"]');
-          const countNode = button.querySelector('[data-pst-part="count"]');
+          const labelNode = button.querySelector('[data-plo-part="label"]');
+          const countNode = button.querySelector('[data-plo-part="count"]');
           if (labelNode !== null && labelNode.textContent !== label) labelNode.textContent = label;
           if (countNode !== null && countNode.textContent !== count) countNode.textContent = count;
 
@@ -381,7 +421,7 @@
 
         if (note === null) {
           note = document.createElement('p');
-          note.className = 'pst-empty';
+          note.className = 'plo-empty';
           note.setAttribute(EMPTY_ATTR, '');
           note.setAttribute('role', 'status');
         }
@@ -398,7 +438,7 @@
       }
 
       /**
-       * 对当前分组的全量卡片重新分类并应用过滤；宿主每渲染一次列表，
+       * 对当前分组的全量卡片重新分类、排序并应用过滤；宿主每渲染一次列表，
        * MutationObserver 就再来一遍，所以这里必须是幂等的。
        */
       function refresh() {
@@ -415,11 +455,12 @@
           const kind = classify(name);
           counts[kind] += 1;
 
-          const hide = kind !== active;
-          if (card.hasAttribute(HIDDEN_ATTR) !== hide) {
-            if (hide) card.setAttribute(HIDDEN_ATTR, '');
-            else card.removeAttribute(HIDDEN_ATTR);
-          }
+          // 分栏过滤：不在当前分类的卡片整条隐藏。
+          if (kind !== active) setAttr(card, HIDDEN_ATTR, '');
+          else if (card.hasAttribute(HIDDEN_ATTR)) card.removeAttribute(HIDDEN_ATTR);
+
+          // 启用分档：宿主把状态写在 data-plugin-status 上，见 orderOf()。
+          setAttr(card, ORDER_ATTR, orderOf(card.getAttribute(STATUS_ATTR)));
         }
 
         updateBar(bar, counts);
@@ -439,7 +480,15 @@
         };
 
         const observer = new MutationObserver(schedule);
-        observer.observe(document.body, { childList: true, subtree: true });
+        // 启用/禁用是宿主就地改属性（React 复用同一个 li，节点不重建），所以
+        // 必须单独盯 data-plugin-status 的属性变化，否则排序要等下次重建才更新。
+        // 只过滤这一个属性：本插件自己写的是 hidden / order，不会自激。
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: [STATUS_ATTR]
+        });
 
         // 语言切换不会改变列表结构，单独订阅一次，让分栏文案跟着走。
         let unsubscribe = null;
@@ -462,6 +511,7 @@
           for (const bar of document.querySelectorAll('[' + BAR_ATTR + ']')) bar.remove();
           for (const note of document.querySelectorAll('[' + EMPTY_ATTR + ']')) note.remove();
           for (const card of document.querySelectorAll('[' + HIDDEN_ATTR + ']')) card.removeAttribute(HIDDEN_ATTR);
+          for (const card of document.querySelectorAll('[' + ORDER_ATTR + ']')) card.removeAttribute(ORDER_ATTR);
 
           // 收缩动画中途卸载：把宿主 ul 上的临时高度/裁切/过渡还原。
           for (const group of document.querySelectorAll(GROUP_SELECTOR)) {
@@ -482,7 +532,7 @@
         }
 
         active = readActive();
-        ctx.effect(() => start(ctx), PLUGIN_ID + ': installed-plugin source tabs');
+        ctx.effect(() => start(ctx), PLUGIN_ID + ': installed-plugin list organizer');
       }
 
       const inject = ['locale'];
@@ -490,7 +540,7 @@
       return {
         inject,
         apply,
-        __test: { classify, zh, en, readActive, active: () => active }
+        __test: { classify, orderOf, zh, en, readActive, active: () => active }
       };
     }
   });
