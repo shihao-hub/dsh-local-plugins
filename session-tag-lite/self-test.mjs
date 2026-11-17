@@ -434,8 +434,8 @@ test('待办 / 存档 / 自定义标签 / 未打标分组', () => {
   const model = t.buildPanelModel(tagState, sessionsFixture, '');
   assert.deepEqual(
     model.groups.map((group) => group.key),
-    [t.RECENT_KEY, '待办', '存档', '读书'],
-    's2 处于运行中，因此也进了「最近」分区'
+    [t.RECENT_KEY, '待办', '读书', '存档'],
+    's2 处于运行中，因此也进了「最近」分区；「存档」组恒置底'
   );
   const reading = model.groups.find((group) => group.name === '读书');
   assert.deepEqual(reading.rows.map((row) => row.id), ['s2', 's3'], '组内按 updatedAt 倒序');
@@ -447,10 +447,10 @@ test('无标签会话落入「未打标」组，保留组头始终在', () => {
   const model = t.buildPanelModel(state, sessionsFixture, '');
   assert.deepEqual(
     model.groups.map((group) => group.key),
-    [t.RECENT_KEY, '待办', '存档', t.UNTAGGED_KEY]
+    [t.RECENT_KEY, '待办', t.UNTAGGED_KEY, '存档']
   );
-  assert.equal(model.groups[2].rows.length, 0, '归档空组仍保留组头，分类骨架稳定');
-  assert.equal(model.groups[3].rows.length, 3);
+  assert.equal(model.groups[3].rows.length, 0, '归档空组仍保留组头，分类骨架稳定，且恒在最后');
+  assert.equal(model.groups[2].rows.length, 3);
 });
 
 test('搜索态不保留空组', () => {
@@ -743,11 +743,48 @@ test('窗口内没有会话时不出现「最近」分区', () => {
   );
   assert.deepEqual(
     model.groups.map((group) => group.key),
-    ['待办', '存档', t.UNTAGGED_KEY]
+    ['待办', t.UNTAGGED_KEY, '存档']
   );
 });
 
-/* 「最近」分区横跨多个标签：行序跟随左栏槽位，同槽内仍按时间倒序。 */
+test('「全部时间」：不设窗口，面板全量收进「全部会话」分区', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const model = t.buildPanelModel(recentState(0), staleSessionsFixture, '');
+  assert.equal(model.groups[0].key, t.RECENT_KEY);
+  assert.equal(model.groups[0].name, '全部会话');
+  assert.equal(model.groups[0].icon, 'clock');
+  assert.deepEqual(model.groups[0].rows.map((row) => row.id), ['old1'], '100 小时前的会话也进来');
+});
+
+test('「全部时间」：搜索仍然生效，不是绕过筛选', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const model = t.buildPanelModel(recentState(0), staleSessionsFixture, 'zzz');
+  assert.equal(
+    model.groups.some((group) => group.key === t.RECENT_KEY),
+    false,
+    '无命中时分区不出现'
+  );
+});
+
+test('「全部时间」：inRecentWindow 对任意存在会话成立', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const now = Date.now();
+  assert.equal(t.inRecentWindow(null, 0, now), false);
+  assert.equal(t.inRecentWindow({ updatedAt: 0 }, 0, now), true);
+  assert.equal(t.inRecentWindow({ updatedAt: 0, running: false }, 0, now), true);
+});
+
+test('「全部时间」：左栏「最近」档吸收全部非存档会话', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const slots = [t.RECENT_KEY, '待办', t.UNTAGGED_SLOT];
+  assert.equal(
+    t.orderValueOf('x', { updatedAt: 1 }, ['待办'], new Set(), slots, true),
+    0,
+    '有标签的旧会话也归最近档'
+  );
+});
+
+
 function recentWithTags() {
   const now = Date.now();
   const list = {
@@ -807,7 +844,7 @@ test('「最近」分区里置顶行归置顶槽', () => {
     options: { recentHours: 24, tagOrder: ['__pinned__', '待办', '__untagged__', '存档'] }
   };
   const model = t.buildPanelModel(state, list, '', new Set(), new Set(['c']));
-  assert.deepEqual(model.groups[0].rows.map((row) => row.id), ['c', 'b', 'a', 'd']);
+  assert.deepEqual(model.groups[0].rows.map((row) => row.id), ['b', 'a', 'd', 'c'], '存档压过置顶，仍置底');
 });
 
 test('选项规范化：合法值保留，脏值回落 24', () => {
@@ -815,7 +852,12 @@ test('选项规范化：合法值保留，脏值回落 24', () => {
   assert.equal(t.normalizeData({ options: { recentHours: 48 } }).options.recentHours, 48);
   assert.equal(t.normalizeData({ options: { recentHours: 1 } }).options.recentHours, 1);
   assert.equal(t.normalizeData({ options: { recentHours: 720 } }).options.recentHours, 720);
-  for (const dirty of [0, 721, -5, '48', NaN, null, undefined, Infinity]) {
+  assert.equal(
+    t.normalizeData({ options: { recentHours: 0 } }).options.recentHours,
+    0,
+    '0 = 全部时间，合法'
+  );
+  for (const dirty of [721, -5, '48', '', NaN, null, undefined, Infinity]) {
     assert.equal(
       t.normalizeData({ options: { recentHours: dirty } }).options.recentHours,
       24,
@@ -829,28 +871,33 @@ test('recentHoursOf：缺省 24，读取持久值，越界回落', () => {
   const { test: t } = loadPlugin(memoryStorage());
   assert.equal(t.recentHoursOf({}), 24);
   assert.equal(t.recentHoursOf({ options: { recentHours: 72 } }), 72);
+  assert.equal(t.recentHoursOf({ options: { recentHours: 0 } }), 0);
   assert.equal(t.recentHoursOf({ options: { recentHours: 999 } }), 24);
 });
 
-test('setRecentHours 落盘；越界与非数字不产生提交', () => {
+test('setRecentHours 落盘；越界、空串与非数字不产生提交', () => {
   const storage = memoryStorage();
   const { test: t } = loadPlugin(storage);
   t.setRecentHours(48);
   assert.equal(t.getData().options.recentHours, 48);
   assert.equal(JSON.parse(storage.read('session-tag-lite.v1')).options.recentHours, 48);
-  const before = t.getSnapshot();
   t.setRecentHours(0);
+  assert.equal(t.getData().options.recentHours, 0, '0 落盘为「全部时间」');
+  const before = t.getSnapshot();
+  t.setRecentHours(-1);
   t.setRecentHours(721);
   t.setRecentHours('abc');
+  t.setRecentHours('');
   assert.equal(t.getSnapshot(), before);
 });
 
-test('hoursLabel：整天用「天」，其余用「小时」', () => {
+test('hoursLabel：整天用「天」，其余用「小时」，0 用「全部时间」', () => {
   const { test: t } = loadPlugin(memoryStorage());
   assert.equal(t.hoursLabel(6), '6 小时');
   assert.equal(t.hoursLabel(24), '24 小时');
   assert.equal(t.hoursLabel(48), '2 天');
   assert.equal(t.hoursLabel(168), '7 天');
+  assert.equal(t.hoursLabel(0), '全部时间');
 });
 
 console.log('面板视图（树形 / 标签页）');
@@ -1097,7 +1144,7 @@ test('orderGroups：面板分组顺序跟随槽位，最近可排到最后', () 
   ];
   assert.deepEqual(
     t.orderGroups(state, groups).map((group) => group.key),
-    ['待办', '存档', '__recent__', '读书', '__untagged__']
+    ['待办', '__recent__', '读书', '__untagged__', '存档']
   );
 
   /* 旧数组没有「最近」槽：保持它在最前。 */
@@ -1114,7 +1161,7 @@ test('slotOfSession：置顶与标签按槽位先后竞争，未排标签归未�
   const { test: t } = loadPlugin(memoryStorage());
   const slots = ['__pinned__', '待办', '读书', '__untagged__', '存档'];
   assert.equal(t.slotOfSession('p1', ['读书'], new Set(['p1']), slots), '__pinned__');
-  assert.equal(t.slotOfSession('s1', ['存档', '待办'], new Set(), slots), '待办');
+  assert.equal(t.slotOfSession('s1', ['存档', '待办'], new Set(), slots), '存档');
   assert.equal(t.slotOfSession('s2', ['存档'], new Set(), slots), '存档');
   assert.equal(t.slotOfSession('s3', [], new Set(), slots), '__untagged__');
   assert.equal(t.slotOfSession('s4', ['工作'], new Set(), slots), '__untagged__');
@@ -1164,6 +1211,64 @@ test('orderValueOf 支持 recent 参数', () => {
   const slots = ['__recent__', '__pinned__', '待办', '__untagged__'];
   assert.equal(t.orderValueOf('r', {}, [], new Set(), slots, true), 0);
   assert.equal(t.orderValueOf('u', {}, [], new Set(), slots, false), 3);
+});
+
+test('存档硬置底：压过最近窗口、官方置顶与其它标签', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const slots = ['__pinned__', '__recent__', '待办', '__untagged__', '存档'];
+  assert.equal(t.slotOfSession('a1', ['存档', '待办'], new Set(['a1']), slots, true), '存档');
+  assert.equal(
+    t.orderValueOf('a1', {}, ['存档', '待办'], new Set(['a1']), slots, true),
+    slots.length
+  );
+  /* 槽位表把「存档」排到最前也无效：order 仍大于所有槽位下标。 */
+  const archiveFirst = ['存档', '__pinned__', '待办', '__untagged__'];
+  assert.equal(
+    t.orderValueOf('a2', {}, ['存档'], new Set(), archiveFirst, false),
+    archiveFirst.length
+  );
+  /* 空白草稿仍豁免为 -1。 */
+  assert.equal(t.orderValueOf('blank', { blank: true }, ['存档'], new Set(), slots, true), -1);
+});
+
+test('normalizeTagOrder：存档槽被强制挪到末尾', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const state = { tags: ['待办', '存档', '读书'] };
+  assert.deepEqual(
+    t.normalizeTagOrder(['存档', '__pinned__', '待办', '__untagged__', '读书'], state),
+    ['__pinned__', '待办', '__untagged__', '读书', '存档']
+  );
+  assert.deepEqual(t.normalizeTagOrder(['待办', '__untagged__'], state), ['待办', '__untagged__']);
+});
+
+test('orderGroups：存档组恒为最后一组（默认与自定义模式）', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const groups = [{ key: '待办' }, { key: '存档' }, { key: '__untagged__' }, { key: '__recent__' }];
+  const custom = {
+    tags: ['待办', '存档'],
+    options: { tagOrder: ['存档', '__recent__', '待办', '__untagged__'] }
+  };
+  assert.equal(t.orderGroups(custom, groups).slice(-1)[0].key, '存档');
+  const plain = { tags: ['待办', '存档'], options: {} };
+  assert.deepEqual(
+    t.orderGroups(plain, groups).map((group) => group.key),
+    ['待办', '__untagged__', '__recent__', '存档']
+  );
+});
+
+test('「最近」分区内存档置底，不受槽位顺序影响', () => {
+  const { test: t } = loadPlugin(memoryStorage());
+  const { list } = recentWithTags();
+  const state = {
+    tags: ['待办', '存档'],
+    marks: { b: ['待办'], c: ['存档'], d: ['待办'] },
+    due: {},
+    collapsed: {},
+    colors: {},
+    options: { recentHours: 24, tagOrder: ['__pinned__', '存档', '__recent__', '待办', '__untagged__'] }
+  };
+  const model = t.buildPanelModel(state, list, '', new Set(), new Set());
+  assert.deepEqual(model.groups[0].rows.map((row) => row.id), ['b', 'd', 'a', 'c']);
 });
 
 test('orderSummary：默认摘要与自定义链路', () => {

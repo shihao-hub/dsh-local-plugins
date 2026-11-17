@@ -93,6 +93,8 @@
       const DEFAULT_RECENT_HOURS = 24;
       const RECENT_MIN_HOURS = 1;
       const RECENT_MAX_HOURS = 720;
+      /** 哨兵值：不设时间上限（下拉里的「全部时间」）。0 与 1–720 互不重叠。 */
+      const RECENT_ALL_HOURS = 0;
       const RECENT_PRESETS = [6, 12, 24, 48, 72, 168];
 
       /**
@@ -149,12 +151,15 @@
         'panel.running': '运行中',
         'panel.untagged': UNTAGGED,
         'panel.recent': '最近 {hours} 小时',
+        'panel.recentAll': '全部会话',
         'panel.hoursBtn': '最近 {hours}',
+        'panel.hoursBtnAll': '全部时间',
         'panel.hoursHint': '调整「最近」窗口',
+        'panel.hoursAll': '全部时间',
         'panel.hoursUnit': '{n} 小时',
         'panel.hoursDays': '{n} 天',
         'panel.hoursCustom': '自定义（{min}–{max} 小时）',
-        'panel.hoursUnitHint': '单位：小时，范围 {min}–{max}',
+        'panel.hoursUnitHint': '单位：小时，范围 {min}–{max}；「全部时间」= 不设上限',
         'panel.hoursApply': '确定',
         'panel.rowTag': '打标签',
         'panel.quickTitle': '给「{title}」打标签',
@@ -183,14 +188,15 @@
         'order.close': '关闭',
         'order.start': '启用自定义排序',
         'order.intro': '默认只让「存档」会话置底，其余按宿主顺序。启用自定义后，可以把「最近 / 置顶 / 待办 / 未打标」等槽位排成任意顺序；同一个槽位内仍按宿主顺序。',
-        'order.hint': '只影响左侧「单列表」；同一槽内保持宿主原顺序；一个会话有多个标签时，取排序里最靠前的那个。',
+        'order.hint': '只影响左侧「单列表」；同一槽内保持宿主原顺序；一个会话有多个标签时，取排序里最靠前的那个。「存档」固定在最末，不能移动。',
         'order.newTagHint': '没有单独排序的标签（包括以后新建的）会自动落在「未打标」之前。',
-        'order.recentHint': '「最近」把最近 N 小时内有活动的会话聚成一个档位，左栏和标签面板都生效；运行中的会话始终算最近。',
+        'order.recentHint': '「最近」把最近 N 小时内有活动的会话聚成一个档位，左栏和标签面板都生效；运行中的会话始终算最近。选「全部时间」（0 上限）时窗口不限，所有会话都会归这一档。带「存档」的会话不会被「最近」吸走，永远排在最后。',
         'order.dragHint': '视觉顺序与宿主的拖拽落点可能不一致；需要精确拖拽时先恢复默认。',
         'order.typeRecent': '最近分区',
         'order.typePinned': '官方置顶',
         'order.typeUntagged': '未打标',
         'order.typeTag': '标签',
+        'order.typeArchiveFixed': '固定末尾',
         'order.slotPinned': '置顶会话',
         'order.slotUntagged': '未打标',
         'order.moveUp': '上移「{name}」',
@@ -240,12 +246,15 @@
         'panel.running': 'Running',
         'panel.untagged': 'Untagged',
         'panel.recent': 'Last {hours} hours',
+        'panel.recentAll': 'All Sessions',
         'panel.hoursBtn': 'Last {hours}',
+        'panel.hoursBtnAll': 'All time',
         'panel.hoursHint': 'Adjust the “recent” window',
+        'panel.hoursAll': 'All time',
         'panel.hoursUnit': '{n} h',
         'panel.hoursDays': '{n} d',
         'panel.hoursCustom': 'Custom ({min}–{max} hours)',
-        'panel.hoursUnitHint': 'Unit: hours, {min}–{max}',
+        'panel.hoursUnitHint': 'Unit: hours, {min}–{max}; “All time” = no upper bound',
         'panel.hoursApply': 'Apply',
         'panel.rowTag': 'Tag this Session',
         'panel.quickTitle': 'Tag “{title}”',
@@ -274,14 +283,15 @@
         'order.close': 'Close',
         'order.start': 'Enable custom order',
         'order.intro': 'By default only Sessions tagged “存档” sink to the bottom; everything else keeps the host order. A custom order turns “recent / pinned / 待办 / untagged” slots into any sequence you like; rows inside a slot keep the host order.',
-        'order.hint': 'Affects the flat Session list only. Rows in a slot keep the host order; a Session with several tags takes the highest-ranked one.',
+        'order.hint': 'Affects the flat Session list only. Rows in a slot keep the host order; a Session with several tags takes the highest-ranked one. Sessions tagged “存档” are pinned to the very bottom and cannot be moved.',
         'order.newTagHint': 'Tags you have not ordered yet — including new ones — land just before “untagged”.',
-        'order.recentHint': '“Recent” groups every Session active in the last N hours into one slot; it applies to both the sidebar and the tag panel. Running Sessions always count as recent.',
+        'order.recentHint': '“Recent” groups every Session active in the last N hours into one slot; it applies to both the sidebar and the tag panel. Running Sessions always count as recent. With “All time” (a 0 window) every Session falls into this slot. Sessions tagged “存档” are never pulled into “Recent” and always stay last.',
         'order.dragHint': 'Visual order can differ from the host’s drag targets; restore the default before drag-sorting.',
         'order.typeRecent': 'Recent section',
         'order.typePinned': 'Host pinned',
         'order.typeUntagged': 'Untagged',
         'order.typeTag': 'Tag',
+        'order.typeArchiveFixed': 'Pinned last',
         'order.slotPinned': 'Pinned Sessions',
         'order.slotUntagged': 'Untagged',
         'order.moveUp': 'Move “{name}” up',
@@ -472,6 +482,12 @@
           out.push(name);
           if (out.length >= CUSTOM_ORDER_MAX) break;
         }
+        /* 「存档」是硬置底槽：无论用户怎么排，读入 / 保存时都固定到末尾。 */
+        const archiveAt = out.indexOf(ARCHIVE);
+        if (archiveAt >= 0 && archiveAt !== out.length - 1) {
+          out.splice(archiveAt, 1);
+          out.push(ARCHIVE);
+        }
         return out.length === 0 ? null : out;
       }
 
@@ -530,6 +546,7 @@
       /** 槽位的可读名：保留槽走文案键，标签直接用名字。 */
       function slotLabel(state, slot) {
         if (slot === RECENT_KEY) {
+          if (recentHoursOf(state) === RECENT_ALL_HOURS) return T('panel.recentAll');
           return fill(T('panel.recent'), { hours: String(recentHoursOf(state)) });
         }
         if (slot === PINNED_SLOT) return T('order.slotPinned');
@@ -550,9 +567,13 @@
           .join(' › ');
       }
 
-      /** 会话是否落在「最近 N 小时」窗口内：运行中无条件算最近。 */
+      /**
+       * 会话是否落在「最近」窗口内：运行中无条件算最近。
+       * 窗口为 0（全部）时，任何存在的会话都算——左栏与面板口径一致。
+       */
       function inRecentWindow(summary, hours, now) {
         if (summary === null || summary === undefined) return false;
+        if (hours === RECENT_ALL_HOURS) return true;
         if (summary.running === true) return true;
         const updated = Number(summary.updatedAt) || 0;
         return updated > 0 && updated >= now - hours * 3600 * 1000;
@@ -562,9 +583,13 @@
        * 一个会话归到哪个槽：把「最近 / 置顶 / 命中的标签」都当作候选，
        * 取槽位表里最靠前的那个；没有命中任何标签时用未打标兜底。
        * 所以把「最近」放在「待办」前面，窗口内的待办会话会归最近区。
+       *
+       * 例外是「存档」：它是硬置底，压过最近窗口、官方置顶与其它标签，
+       * 不管槽位表把它排在哪里（排序数组里它也会被规范化到末尾）。
        */
       function slotOfSession(sessionId, names, pinnedIds, slots, recent) {
         if (!Array.isArray(slots)) return null;
+        if (names.indexOf(ARCHIVE) >= 0) return ARCHIVE;
         const candidates = [];
         if (recent === true) candidates.push(RECENT_KEY);
         if (pinnedIds instanceof Set && pinnedIds.has(sessionId)) candidates.push(PINNED_SLOT);
@@ -580,9 +605,11 @@
         return UNTAGGED_SLOT;
       }
 
-      /** 一行的 CSS order：空白草稿豁免为 -1；其余是槽位下标。 */
+      /** 一行的 CSS order：空白草稿豁免为 -1；存档恒置底；其余是槽位下标。 */
       function orderValueOf(sessionId, summary, names, pinnedIds, slots, recent) {
         if (summary !== null && summary !== undefined && summary.blank === true) return -1;
+        /* 「存档」恒置底：返回值大于任何槽位下标，与它在槽位表里的位置无关。 */
+        if (names.indexOf(ARCHIVE) >= 0) return Array.isArray(slots) ? slots.length : 1;
         const slot = slotOfSession(sessionId, names, pinnedIds, slots, recent);
         if (slot === null) return 0;
         const index = slots.indexOf(slot);
@@ -664,7 +691,9 @@
           const hours = raw.options.recentHours;
           if (typeof hours === 'number' && Number.isFinite(hours)) {
             const rounded = Math.round(hours);
-            if (rounded >= RECENT_MIN_HOURS && rounded <= RECENT_MAX_HOURS) {
+            if (rounded === RECENT_ALL_HOURS) {
+              options.recentHours = rounded;
+            } else if (rounded >= RECENT_MIN_HOURS && rounded <= RECENT_MAX_HOURS) {
               options.recentHours = rounded;
             }
           }
@@ -884,15 +913,21 @@
             : state.options.recentHours;
         if (typeof value === 'number' && Number.isFinite(value)) {
           const rounded = Math.round(value);
+          if (rounded === RECENT_ALL_HOURS) return rounded;
           if (rounded >= RECENT_MIN_HOURS && rounded <= RECENT_MAX_HOURS) return rounded;
         }
         return DEFAULT_RECENT_HOURS;
       }
 
-      /** 调整「最近 N 小时」窗口；越界或非数字一律忽略。 */
+      /** 调整「最近 N 小时」窗口；越界或非数字一律忽略。0 = 全部（不限时间）。 */
       function setRecentHours(value) {
+        /* 空输入框的 Number('') === 0，会误落成「全部」；显式挡掉。 */
+        if (typeof value === 'string' && value.trim() === '') return;
         const hours = Math.round(Number(value));
-        if (!Number.isFinite(hours) || hours < RECENT_MIN_HOURS || hours > RECENT_MAX_HOURS) return;
+        if (!Number.isFinite(hours)) return;
+        if (hours !== RECENT_ALL_HOURS && (hours < RECENT_MIN_HOURS || hours > RECENT_MAX_HOURS)) {
+          return;
+        }
         if (hours === recentHoursOf(data)) return;
         commitData(
           Object.assign({}, data, {
@@ -989,8 +1024,9 @@
         setTagOrder(null);
       }
 
-      /** 小时数的人话标签：≥2 整天用「N 天」，其余用「N 小时」。 */
+      /** 小时数的人话标签：0 表示全部，「≥2 整天」用「N 天」，其余用「N 小时」。 */
       function hoursLabel(hours) {
+        if (hours === RECENT_ALL_HOURS) return T('panel.hoursAll');
         if (hours >= 48 && hours % 24 === 0) {
           return fill(T('panel.hoursDays'), { n: String(hours / 24) });
         }
@@ -1464,6 +1500,8 @@
             if (!custom) {
               return archiveLastOn(state) && row.tags.indexOf(ARCHIVE) >= 0 ? 1 : 0;
             }
+            /* 「存档」硬置底，哪怕它还命中了更靠前的槽。 */
+            if (row.tags.indexOf(ARCHIVE) >= 0) return slots.length;
             const slot = slotOfSession(row.id, row.tags, pinned, slots);
             const index = slots.indexOf(slot);
             return index < 0 ? slots.length : index;
@@ -1521,19 +1559,22 @@
           });
         }
 
-        /* 「最近 N 小时」置顶分区：时间维度，不是标签；窗口内（或运行中）的
-           会话按最近活动倒序。它自己会随时间收敛，不会像「未打标」那样无限长。 */
+        /* 「最近」置顶分区：时间维度，不是标签；窗口内（或运行中）的会话按
+           最近活动倒序。窗口为 0（「全部时间」）时不设上限，面板里所有会话
+           都进这一档；它自己会随时间收敛，不会像「未打标」那样无限长。 */
         const hours = recentHoursOf(state);
-        const windowStart = Date.now() - hours * 3600 * 1000;
+        const all = hours === RECENT_ALL_HOURS;
+        const windowStart = all ? -Infinity : Date.now() - hours * 3600 * 1000;
         const recentRows = sortRecent(
           filter(function (row) {
+            if (all) return true;
             return row.running || row.updatedAt >= windowStart;
           })
         );
         if (recentRows.length > 0) {
           groups.unshift({
             key: RECENT_KEY,
-            name: fill(T('panel.recent'), { hours: String(hours) }),
+            name: all ? T('panel.recentAll') : fill(T('panel.recent'), { hours: String(hours) }),
             color: '',
             icon: 'clock',
             rows: recentRows,
@@ -1562,30 +1603,46 @@
        * 标签面板的分组顺序跟随自定义槽位表：
        * `__recent__` 对应「最近」分区，`__untagged__` 对应未打标组，其余按标签名。
        * 旧数组没有「最近」槽时保持它最前，升级前后观感不变。
+       * 「存档」组是硬置底：无论默认还是自定义模式，都永远排在最后一组。
        */
       function orderGroups(state, groups) {
         const order = tagOrderOf(state);
-        if (order === null) return groups;
-        const slots = resolveSlots(state, order);
-        const recentIndex = slots.indexOf(RECENT_KEY);
-        const rank = function (group) {
-          let key = group.key;
-          if (key === RECENT_KEY) return recentIndex < 0 ? -1 : recentIndex;
-          if (key === UNTAGGED_KEY) key = UNTAGGED_SLOT;
-          const index = slots.indexOf(key);
-          return index < 0 ? slots.length : index;
-        };
-        return groups
-          .map(function (group, index) {
-            return { group: group, index: index, rank: rank(group) };
-          })
-          .sort(function (a, b) {
-            if (a.rank !== b.rank) return a.rank - b.rank;
-            return a.index - b.index;
-          })
-          .map(function (item) {
-            return item.group;
-          });
+        const sorted =
+          order === null
+            ? groups.slice()
+            : (function () {
+                const slots = resolveSlots(state, order);
+                const recentIndex = slots.indexOf(RECENT_KEY);
+                const rank = function (group) {
+                  let key = group.key;
+                  if (key === RECENT_KEY) return recentIndex < 0 ? -1 : recentIndex;
+                  if (key === UNTAGGED_KEY) key = UNTAGGED_SLOT;
+                  const index = slots.indexOf(key);
+                  return index < 0 ? slots.length : index;
+                };
+                return groups
+                  .map(function (group, index) {
+                    return { group: group, index: index, rank: rank(group) };
+                  })
+                  .sort(function (a, b) {
+                    if (a.rank !== b.rank) return a.rank - b.rank;
+                    return a.index - b.index;
+                  })
+                  .map(function (item) {
+                    return item.group;
+                  });
+              })();
+        let archiveAt = -1;
+        for (let index = 0; index < sorted.length; index += 1) {
+          if (sorted[index].key === ARCHIVE) {
+            archiveAt = index;
+            break;
+          }
+        }
+        if (archiveAt >= 0 && archiveAt !== sorted.length - 1) {
+          sorted.push(sorted.splice(archiveAt, 1)[0]);
+        }
+        return sorted;
       }
 
       /* ------------------------------------------------------------------ *
@@ -1951,12 +2008,15 @@
           if (slot === RECENT_KEY) return T('order.typeRecent');
           if (slot === PINNED_SLOT) return T('order.typePinned');
           if (slot === UNTAGGED_SLOT) return T('order.typeUntagged');
+          if (slot === ARCHIVE) return T('order.typeArchiveFixed');
           return T('order.typeTag');
         };
         const move = function (index, delta) {
-          const next = slots.slice();
           const to = index + delta;
-          if (to < 0 || to >= next.length) return;
+          if (to < 0 || to >= slots.length) return;
+          /* 「存档」固定末尾：自己不能动，别的槽也不能跨过它。 */
+          if (slots[index] === ARCHIVE || slots[to] === ARCHIVE) return;
+          const next = slots.slice();
           const item = next.splice(index, 1)[0];
           next.splice(to, 0, item);
           setTagOrder(next);
@@ -1982,7 +2042,7 @@
                 {
                   type: 'button',
                   className: 'stl_ordBtn',
-                  disabled: index === 0,
+                  disabled: index === 0 || slot === ARCHIVE,
                   title: fill(T('order.moveUp'), { name: name }),
                   'aria-label': fill(T('order.moveUp'), { name: name }),
                   onClick: function () {
@@ -1996,7 +2056,7 @@
                 {
                   type: 'button',
                   className: 'stl_ordBtn',
-                  disabled: index === slots.length - 1,
+                  disabled: index === slots.length - 1 || slot === ARCHIVE,
                   title: fill(T('order.moveDown'), { name: name }),
                   'aria-label': fill(T('order.moveDown'), { name: name }),
                   onClick: function () {
@@ -2428,7 +2488,9 @@
               setQuickDraft('');
               setHoursOpen(false);
               setActiveTabKey(null);
-              setHoursDraft(String(recentHoursOf(app.data)));
+              setHoursDraft(
+                recentHoursOf(app.data) === RECENT_ALL_HOURS ? '' : String(recentHoursOf(app.data))
+              );
             } else if (!app.ui.panel && wasOpen.current) {
               wasOpen.current = false;
             }
@@ -2877,10 +2939,17 @@
                     'aria-expanded': hoursOpen,
                     onClick: function () {
                       setHoursOpen(!hoursOpen);
-                      setHoursDraft(String(recentHoursOf(app.data)));
+                      setHoursDraft(
+                        recentHoursOf(app.data) === RECENT_ALL_HOURS
+                          ? ''
+                          : String(recentHoursOf(app.data))
+                      );
                     }
                   },
-                  fill(T('panel.hoursBtn'), { hours: String(recentHoursOf(app.data)) }) + ' ▾'
+                  (recentHoursOf(app.data) === RECENT_ALL_HOURS
+                    ? T('panel.hoursBtnAll')
+                    : fill(T('panel.hoursBtn'), { hours: String(recentHoursOf(app.data)) })) +
+                    ' ▾'
                 ),
                 hoursOpen
                   ? h(
@@ -2904,6 +2973,25 @@
                           hoursLabel(preset)
                         );
                       }),
+                      /* 「全部时间」：哨兵 0，不设上限；排在预设之后、分隔线之前。 */
+                      (function () {
+                        const active = recentHoursOf(app.data) === RECENT_ALL_HOURS;
+                        return h(
+                          'button',
+                          {
+                            key: 'all',
+                            type: 'button',
+                            role: 'menuitemradio',
+                            'aria-checked': active,
+                            className: 'stl_hoursItem' + (active ? ' stl_hoursItemActive' : ''),
+                            onClick: function () {
+                              setRecentHours(RECENT_ALL_HOURS);
+                              setHoursOpen(false);
+                            }
+                          },
+                          T('panel.hoursAll')
+                        );
+                      })(),
                       h('div', { className: 'stl_hoursSep' }),
                       h(
                         'div',
@@ -3399,6 +3487,7 @@
           DEFAULT_RECENT_HOURS: DEFAULT_RECENT_HOURS,
           RECENT_MIN_HOURS: RECENT_MIN_HOURS,
           RECENT_MAX_HOURS: RECENT_MAX_HOURS,
+          RECENT_ALL_HOURS: RECENT_ALL_HOURS,
           normalizeData: normalizeData,
           loadData: loadData,
           colorOf: colorOf,
