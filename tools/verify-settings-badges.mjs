@@ -31,7 +31,8 @@ const ROWS = [
   { plugin: 'rider-theme', rowId: 'rider-theme', badgeClass: 'rdt_badge', dictPrefix: 'row' },
   { plugin: 'model-favorites', rowId: 'model-favorites-status', badgeClass: 'mfs_badge', dictPrefix: 'settings' },
   { plugin: 'rightbar-width', rowId: 'rightbar-width', badgeClass: 'rbw_badge', dictPrefix: 'row' },
-  { plugin: 'session-tag-lite', rowId: 'session-tag-lite', badgeClass: 'stl_setBadge', dictPrefix: 'row' }
+  { plugin: 'session-tag-lite', rowId: 'session-tag-lite', badgeClass: 'stl_setBadge', dictPrefix: 'row' },
+  { plugin: 'workspace-hide', rowId: 'workspace-hide', badgeClass: 'wh_badge', dictPrefix: 'row' }
 ];
 
 let checks = 0;

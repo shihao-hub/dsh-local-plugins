@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Workspace hide",
+    "description": "Hide infrequently used Workspaces from the sidebar without deleting them; restore them from the view-options menu, the settings row, or the toast undo."
+  }
+}

@@ -1,0 +1,6 @@
+# Workspace hide: the Client half filters the sidebar DOM and the Host half
+# persists the hidden-id set behind one same-origin route
+# (`$DSH_HOME/workspace-hide/state.json`). No host package is modified.
+- insert:
+    - id: workspace-hide
+      name: '@local/workspace-hide'

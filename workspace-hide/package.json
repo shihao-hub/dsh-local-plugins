@@ -1,0 +1,35 @@
+{
+  "name": "@local/workspace-hide",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Hide infrequently used Workspaces from the sidebar without deleting their registration. Restore them from the view-options menu, the settings row, or a toast undo. Client-side DOM enhancement: the host Workspace data and Session logs are never touched.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "self-test.mjs",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  }
+}
