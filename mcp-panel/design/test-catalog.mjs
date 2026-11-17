@@ -5,12 +5,46 @@
  */
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { zstdCompressSync } from 'node:zlib';
 
 process.exitCode = 1;
+
+// 隔离停用成本账本与会话回溯目录，避免测试写真实 ~/.dsh
+const COSTS_FILE = path.join(os.tmpdir(), 'dsh-mcp-panel-test-costs-' + process.pid + '.json');
+const SESSIONS_DIR = path.join(os.tmpdir(), 'dsh-mcp-panel-test-sessions-' + process.pid);
+process.env.DSH_MCP_PANEL_COSTS_FILE = COSTS_FILE;
+process.env.DSH_MCP_PANEL_SESSIONS_DIR = SESSIONS_DIR;
+process.on('exit', () => {
+  try {
+    fs.rmSync(COSTS_FILE, { force: true });
+    fs.rmSync(SESSIONS_DIR, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+});
 
 //#region host half
 const { apply, __test: hostTest } = await import('../index.js');
 assert.ok(hostTest, 'host __test exports present');
+
+// 合成一个历史会话日志，供"停用前占用"回溯测试使用。
+// 关键：同一会话先启用 rea、后停用——回溯必须找到"早期含 rea 的最后一个 header"，
+// 而不是文件里最后一个（已不含 rea 的）header。
+const syntheticTools = [
+  { name: 'mcp__rea__reverse_engineer', description: '综合逆向入口', parameters: { type: 'object', properties: { target: { type: 'string' } } } },
+  { name: 'mcp__rea__compare_web_captures', description: '对比网页快照', parameters: { type: 'object', properties: { a: { type: 'string' } } } }
+];
+fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+const syntheticLog = [
+  { type: 'request/header', data: { header: { config: {}, tools: syntheticTools } } },
+  { type: 'request/header', data: { header: { config: {}, tools: [{ name: 'read' }] } } }
+]
+  .map((record) => JSON.stringify(record))
+  .join('\n');
+fs.writeFileSync(path.join(SESSIONS_DIR, 'session-test.jsonl.zstd'), zstdCompressSync(Buffer.from(syntheticLog + '\n')));
 
 const routes = new Map();
 const mockEntries = [
@@ -60,6 +94,19 @@ const mockEntries = [
   }
 ];
 
+const globalSchemas = [
+  { name: 'mcp__argo__argo_search', description: '统一网络搜索', parameters: { type: 'object', properties: { query: { type: 'string' }, depth: { type: 'string' } }, required: ['query'] } },
+  { name: 'mcp__argo__argo_fetch', description: '智能页面抓取', parameters: { type: 'object', properties: { url: { type: 'string' } } } },
+  { name: 'read', description: 'not mcp', parameters: {} }
+];
+// agent 作用域视图比全局视图多出 preset 注册的内置工具（真实 Host 即如此）
+const agentSchemas = [
+  ...globalSchemas,
+  { name: 'todo_write', description: '内置待办', parameters: { type: 'object', properties: { todos: { type: 'array' } } } },
+  { name: 'pwsh', description: '内置终端', parameters: { type: 'object', properties: { command: { type: 'string' } } } }
+];
+const mockAgents = [{ id: 'agent-a' }, { id: 'agent-b' }];
+
 const ctx = {
   effect(fn) { fn(); },
   webServer: {
@@ -71,12 +118,16 @@ const ctx = {
   loader: {
     entries: () => mockEntries
   },
+  agents: {
+    list: () => mockAgents
+  },
   tools: {
-    schemas: () => [
-      { name: 'mcp__argo__argo_search', description: '统一网络搜索', parameters: { type: 'object', properties: { query: { type: 'string' }, depth: { type: 'string' } }, required: ['query'] } },
-      { name: 'mcp__argo__argo_fetch', description: '智能页面抓取', parameters: { type: 'object', properties: { url: { type: 'string' } } } },
-      { name: 'read', description: 'not mcp', parameters: {} }
-    ]
+    // 无 scope（全局层）只看得到 MCP 与少数全局工具；agent 视图才含 preset 内置工具。
+    // 停用的 server 会从注册表注销工具，mock 同步模拟这一点。
+    schemas: (scope) => {
+      const schemas = scope === undefined ? globalSchemas : agentSchemas;
+      return mockEntries[0].disabled ? schemas.filter((schema) => !schema.name.startsWith('mcp__argo__')) : schemas;
+    }
   }
 };
 
@@ -152,7 +203,64 @@ const everything = catRes.payload.servers.find((s) => s.serverName === 'everythi
 assert.equal(everything.tools.length, 0);
 assert.equal(everything.disabled, false);
 assert.equal(everything.reconnect.enabled, false);
+assert.equal(everything.toolTokens, 0, 'A tool-less server costs no context');
 assert.ok(catRes.payload.servers.indexOf(argo) < catRes.payload.servers.indexOf(everything), 'tools-bearing servers sort first');
+
+// Context price: the Host's own density (ceil(chars / 4), +4 once for the whole array),
+// measured on the AGENT-scoped view so preset built-in tools are included in the denominator.
+const mcpCharsOf = (schemas) => schemas.reduce((sum, schema) => sum + JSON.stringify(schema).length, 0);
+const argoSchemas = agentSchemas.filter((schema) => schema.name.startsWith('mcp__argo__'));
+const builtinSchemas = agentSchemas.filter((schema) => !schema.name.startsWith('mcp__'));
+const argoChars = mcpCharsOf(argoSchemas);
+const builtinChars = mcpCharsOf(builtinSchemas);
+const allChars = JSON.stringify(agentSchemas).length;
+const definitions = catRes.payload.toolDefinitions;
+assert.equal(definitions.chars, allChars);
+assert.equal(definitions.tokens, Math.ceil(allChars / 4) + 4);
+assert.equal(definitions.mcp.chars, argoChars);
+assert.equal(definitions.mcp.tokens, Math.ceil(argoChars / 4));
+assert.equal(definitions.builtin.chars, builtinChars);
+assert.equal(definitions.builtin.tokens, Math.ceil(builtinChars / 4));
+assert.equal(definitions.basis.kind, 'agent', 'agent-scoped view drives the denominator');
+assert.equal(definitions.basis.tools, agentSchemas.length);
+assert.ok(definitions.builtin.chars > 0, 'preset built-ins are not dropped from the denominator');
+
+assert.equal(argo.toolChars, argoChars);
+assert.equal(argo.toolTokens, Math.ceil(argoChars / 4));
+const argoSearchTool = argo.tools.find((tool) => tool.name === 'mcp__argo__argo_search');
+assert.equal(argoSearchTool.chars, JSON.stringify(globalSchemas[0]).length);
+assert.equal(argoSearchTool.tokens, Math.ceil(JSON.stringify(globalSchemas[0]).length / 4));
+
+// Global fallback when no agent is live.
+const globalOnly = hostTest.resolveToolContext({ tools: { schemas: () => globalSchemas } });
+assert.equal(globalOnly.basis.kind, 'global');
+assert.equal(globalOnly.toolSchemas.length, globalSchemas.length);
+
+// Longest matching server name wins, so `a` never steals `a__b`'s tools.
+assert.deepEqual(
+  hostTest.assignToolGroups(
+    [{ name: 'mcp__a__x' }, { name: 'mcp__a__b__y' }, { name: 'read' }],
+    ['a', 'a__b']
+  ),
+  ['a', 'a__b', undefined]
+);
+assert.equal(hostTest.tokensOfChars(400), 100);
+assert.equal(hostTest.tokensOfChars(401), 101);
+assert.equal(hostTest.tokensOfChars(undefined), undefined);
+
+// 停用成本历史补录：从最近会话日志回溯"停用前占用"
+hostTest.backfillCosts([{ entryId: 'mcp-rea', serverName: 'rea' }]);
+const reaCost = hostTest.lastServerCost('mcp-rea');
+assert.ok(reaCost, 'backfill records the disabled server cost');
+assert.equal(reaCost.tools, syntheticTools.length);
+assert.equal(reaCost.toolChars, syntheticTools.reduce((sum, schema) => sum + JSON.stringify(schema).length, 0));
+assert.equal(reaCost.toolTokens, Math.ceil(reaCost.toolChars / 4));
+assert.deepEqual(hostTest.lastRequestTools('{"type":"request/header","data":{"header":{"tools":[{"name":"x"}]}}}\n'), [{ name: 'x' }]);
+// 同一会话内先启用后停用：回溯取"最后一个仍含该 server 的 header"
+const syntheticText = syntheticLog + '\n';
+assert.equal(hostTest.lastRequestTools(syntheticText).length, 1);
+assert.equal(hostTest.lastRequestTools(syntheticText, 'mcp__rea__').length, syntheticTools.length);
+assert.equal(hostTest.lastToolsByPrefix(syntheticText, ['mcp__rea__']).get('mcp__rea__').length, syntheticTools.length);
 
 // Method guard
 const postCat = await callHandler(catalogRoute.handler, { method: 'POST' });
@@ -169,6 +277,16 @@ assert.equal(toggleRes.payload.ok, true);
 assert.equal(toggleRes.payload.entryId, 'mcp-argo');
 assert.equal(toggleRes.payload.enabled, false);
 assert.equal(mockEntries[0].disabled, true);
+
+// 停用后仍能看到"停用前占用"：工具已注销，数值来自本地成本账本
+const afterToggle = await callHandler(catalogRoute.handler, { method: 'GET' });
+const argoDisabled = afterToggle.payload.servers.find((s) => s.serverName === 'argo');
+assert.equal(argoDisabled.disabled, true);
+assert.equal(argoDisabled.toolTokens, Math.ceil(argoChars / 4));
+assert.equal(argoDisabled.costStale, true);
+assert.equal(typeof argoDisabled.costUpdatedAt, 'string');
+assert.equal(afterToggle.payload.toolDefinitions.mcp.tokens, 0, 'disabled server leaves the live tool set');
+assert.equal(hostTest.lastServerCost('mcp-argo').toolTokens, Math.ceil(argoChars / 4));
 
 // 3. POST restart-server route
 const restartRoute = routes.get('/plugin/mcp-panel/restart-server');
@@ -197,6 +315,12 @@ assert.ok(patched1.content.includes('disabled: true'));
 const patched2 = hostTest.updateYamlEntryDisabled(patched1.content, 'mcp-test', false);
 assert.equal(patched2.changed, true);
 assert.ok(!patched2.content.includes('disabled: true'));
+
+// Toggle persistence must cover the HOME patch layer: user-level inserts (rea)
+// live there and it applies LAST, so a profile-only write never survived restart.
+const candidates = hostTest.patchFileCandidates();
+assert.equal(candidates.length, 3);
+assert.equal(candidates[0], path.join(os.homedir(), '.dsh', 'cordis.patch.yml'));
 
 console.log('host half OK');
 //#endregion
@@ -241,6 +365,29 @@ assert.equal(t.formatBytes(96 * 1024 * 1024), '96.0 MB');
 assert.equal(t.formatBytes(1.5 * 1024 * 1024 * 1024), '1.50 GB');
 assert.equal(t.formatBytes(512 * 1024), '512 KB');
 assert.equal(t.formatBytes(undefined), undefined);
+
+// Context-cost formatting and highlighting thresholds.
+assert.equal(t.formatTokens(999), '999');
+assert.equal(t.formatTokens(6297), '6.3K');
+assert.equal(t.formatTokens(109104), '109.1K');
+assert.equal(t.formatTokens(129627), '129.6K');
+assert.equal(t.formatTokens(1300000), '1.3M');
+assert.equal(t.formatTokens(undefined), undefined);
+assert.equal(t.percentOf(109104, 129627), '84%');
+assert.equal(t.percentOf(0, 100), '0%');
+assert.equal(t.percentOf(0.5, 100), '<1%');
+assert.equal(t.percentOf(1, 0), undefined);
+assert.equal(t.contextTone(84, 100), ' mcpx_ctxHot');
+assert.equal(t.contextTone(30, 100), ' mcpx_ctxWarn');
+assert.equal(t.contextTone(5, 100), '');
+assert.equal(t.definitionTone({ tokens: 100, mcp: { tokens: 79 } }), '');
+assert.equal(t.definitionTone({ tokens: 100, mcp: { tokens: 80 } }), ' mcpx_ctxWarn');
+assert.equal(t.definitionTone({ tokens: 100, mcp: { tokens: 30 } }), '');
+assert.equal(t.definitionTone(undefined), '');
+assert.equal(
+  t.serverContextTooltip({ toolTokens: 109104, toolChars: 436414 }, 129627, (key) => key),
+  '436,414 ctxChars ≈ 109.1K tokens · 84%'
+);
 console.log('client half OK');
 //#endregion
 

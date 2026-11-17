@@ -4,7 +4,7 @@
  * Serves one same-origin HTTP route:
  *   GET /plugin/mcp-panel/catalog
  *
- * The catalog joins three live facts of the Host composition:
+ * The catalog joins four live facts of the Host composition:
  *   1. Configuration — every Loader entry whose module is
  *      `@deepseek-ai/dsh-mcp-client` (each entry = one configured MCP server,
  *      inserted by the profile patch or by a bundle patch such as argo's).
@@ -19,6 +19,10 @@
  *      its command AND at least one distinctive argument token, so same-command
  *      servers (`node.exe`) never sum one another's subtrees; matched subtrees
  *      are summed (uvx → python, npx → node chains included).
+ *   4. Context price — the heuristic tokens each server's tool declarations
+ *      cost the model, under the Host's own 4-chars-per-token density. A
+ *      server that publishes 170 tools can silently eat most of the context
+ *      window, which is exactly the fact this panel must surface.
  *
  * Credential-shaped values never leave this half: environment variables and
  * HTTP headers are reported as counts only.
@@ -27,13 +31,14 @@
  * `(req, res)` and owns the whole response.
  */
 
-/** Services this half needs: the HTTP carrier, the Loader entry table, and the tool registry. */
-export const inject = ['webServer', 'loader', 'tools'];
+/** Services this half needs: the HTTP carrier, the Loader entry table, the tool registry, and live agents. */
+export const inject = ['webServer', 'loader', 'tools', 'agents'];
 
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { zstdDecompressSync } from 'node:zlib';
 
 const ROUTE = '/plugin/mcp-panel/catalog';
 const ROUTE_TOGGLE = '/plugin/mcp-panel/toggle';
@@ -43,6 +48,29 @@ const ROUTE_RESTART = '/plugin/mcp-panel/restart-server';
 const MCP_MODULE = '@deepseek-ai/dsh-mcp-client';
 /** Config shape of @deepseek-ai/dsh-mcp-client: reconnect defaults, restated for display. */
 const RECONNECT_DEFAULTS = { enabled: true, initialDelayMs: 500, maxDelayMs: 30000, maxAttempts: 10 };
+
+/**
+ * 工具定义的上下文计价口径，逐字复刻宿主自身的启发式估算：
+ * `@deepseek-ai/dsh-token-meter/lib/types/estimate.js`（dsh 0.2.1-rc.2）把一组
+ * 工具 schema 计价为 `ceil(JSON.stringify(tools).length / 4) + 4`，会话上下文
+ * 计量条显示的 `toolsTokens` 就是同一数字。链接型本地插件无法 import 宿主内部
+ * 包，因此在此重述；若未来宿主改变密度口径，需同步这两项常量。
+ */
+const CHARS_PER_TOKEN = 4;
+/** 整个工具数组的结构性 JSON 开销，只在总量上计入一次（与 estimateToolsTokens 一致）。 */
+const TOOLS_BLOCK_OVERHEAD = 4;
+
+/**
+ * 停用过的 server 仍要能回答"它停用前吃掉多少上下文"：工具 schema 在 server
+ * 停用后已从注册表注销，无法现算，因此把每个 server 最后一次启用时的成本记账
+ * 到 `~/.dsh/mcp-panel/tool-costs.json`（可用 DSH_MCP_PANEL_COSTS_FILE 覆盖，
+ * 供测试隔离）。只在值变化时落盘；只读环境或写失败静默忽略，面板退回内存值。
+ */
+const COSTS_DIR = path.join(os.homedir(), '.dsh', 'mcp-panel');
+const COSTS_FILE = process.env.DSH_MCP_PANEL_COSTS_FILE ?? path.join(COSTS_DIR, 'tool-costs.json');
+const COSTS_VERSION = 1;
+/** @type {{version: number, servers: Record<string, object>}|undefined} */
+let costCache;
 
 /** Process-snapshot cache: one PowerShell enumeration serves every fetch within the TTL. */
 const MEMORY_TTL_MS = 10000;
@@ -131,12 +159,13 @@ async function handleCatalog(req, res, ctx) {
 		return;
 	}
 	try {
-		const { servers, memoryProbed } = await collectCatalog(ctx);
+		const { servers, memoryProbed, toolDefinitions } = await collectCatalog(ctx);
 		sendJson(res, 200, {
 			ok: true,
 			generatedAt: new Date().toISOString(),
 			hostPid: process.pid,
 			memoryProbed,
+			toolDefinitions,
 			servers
 		});
 	} catch (error) {
@@ -219,44 +248,75 @@ async function handleRestart(req, res, ctx) {
 
 /**
  * Build the MCP server catalog: one row per `@deepseek-ai/dsh-mcp-client`
- * Loader entry, joined with that server's live tool registrations and, when
- * the process snapshot is available, its child-process memory footprint.
+ * Loader entry, joined with that server's live tool registrations, its
+ * context price (how many heuristic tokens its tool declarations cost the
+ * model), and, when the process snapshot is available, its child-process
+ * memory footprint.
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @returns {Promise<{servers: Array<object>, memoryProbed: boolean}>}
- *   server rows, tools-bearing first, then by name
+ * @returns {Promise<{servers: Array<object>, memoryProbed: boolean, toolDefinitions?: object}>}
+ *   server rows, tools-bearing first, then by context price
  */
 async function collectCatalog(ctx) {
-	const toolSchemas = Array.isArray(ctx.tools?.schemas?.()) ? ctx.tools.schemas() : [];
+	const resolved = resolveToolContext(ctx);
+	const toolSchemas = resolved.toolSchemas;
 	const snapshot = await processSnapshot();
 	const descendants = snapshot.ok ? descendantProcesses(snapshot.processes, process.pid) : [];
-	const servers = [];
+	const schemaCharCounts = toolSchemas.map(schemaChars);
+	const mcpEntries = [];
 	for (const entry of ctx.loader.entries()) {
-		const options = entry?.options ?? {};
-		if (options.name !== MCP_MODULE) continue;
+		if (entry?.options?.name === MCP_MODULE) mcpEntries.push(entry);
+	}
+	const groups = assignToolGroups(toolSchemas, mcpEntries.map(serverNameOf));
+	const toolDefinitions = toolDefinitionTotals(toolSchemas, schemaCharCounts, groups);
+	if (toolDefinitions !== undefined) toolDefinitions.basis = resolved.basis;
+	const servers = [];
+	/** Disabled servers with no recorded cost yet; a one-time backfill may fill them. */
+	const missingCost = [];
+	for (const entry of mcpEntries) {
+		const options = entry.options;
 		const config = isRecord(options.config) ? options.config : {};
-		const serverName =
-			typeof config.serverName === 'string' && config.serverName !== ''
-				? config.serverName
-				: typeof options.id === 'string'
-					? options.id
-					: 'mcp';
+		const serverName = serverNameOf(entry);
+		const entryId = typeof options.id === 'string' ? options.id : undefined;
 		const disabled = Boolean(entry.disabled);
 		const prefix = `mcp__${serverName}__`;
 		const tools = disabled
 			? []
 			: toolSchemas
-				.filter((tool) => isRecord(tool) && typeof tool.name === 'string' && tool.name.startsWith(prefix))
-				.map((tool) => ({
+				.map((tool, index) => ({ tool, index }))
+				.filter(({ tool }) => isRecord(tool) && typeof tool.name === 'string' && tool.name.startsWith(prefix))
+				.map(({ tool, index }) => ({
 					name: tool.name,
 					description: typeof tool.description === 'string' ? tool.description : '',
 					params: countKeys(isRecord(tool.parameters) ? tool.parameters.properties : undefined),
-					required: countKeys(isRecord(tool.parameters) ? tool.parameters.required : undefined)
+					required: countKeys(isRecord(tool.parameters) ? tool.parameters.required : undefined),
+					chars: schemaCharCounts[index],
+					tokens: tokensOfChars(schemaCharCounts[index])
 				}))
 				.sort((a, b) => a.name.localeCompare(b.name));
+		// A disabled or not-yet-connected server injects nothing, so its live
+		// context price is genuinely zero. A disabled one still reports the last
+		// cost recorded while it was enabled, marked stale, so "what did turning
+		// it off free?" stays answerable after the tools are unregistered.
+		const liveChars = disabled ? 0 : sumChars(schemaCharCounts.filter((_, index) => groups[index] === serverName));
+		let toolChars = liveChars;
+		let toolTokens = tokensOfChars(liveChars);
+		let stale;
+		if (disabled) {
+			const remembered = lastServerCost(entryId);
+			if (remembered !== undefined && typeof remembered.toolTokens === 'number' && remembered.toolTokens > 0) {
+				toolChars = remembered.toolChars;
+				toolTokens = remembered.toolTokens;
+				stale = remembered;
+			} else if (entryId !== undefined && entryId !== '') {
+				missingCost.push({ entryId, serverName });
+			}
+		}
 		const server = {
-			entryId: typeof options.id === 'string' ? options.id : undefined,
+			entryId,
 			serverName,
 			disabled,
+			toolChars,
+			toolTokens,
 			transport: config.transport === 'streamable-http' ? 'streamable-http' : 'stdio',
 			command: typeof config.command === 'string' ? config.command : undefined,
 			args: Array.isArray(config.args) ? config.args.filter((arg) => typeof arg === 'string') : undefined,
@@ -269,6 +329,13 @@ async function collectCatalog(ctx) {
 			reconnect: normalizeReconnect(config.reconnect),
 			tools
 		};
+		if (stale !== undefined) {
+			server.costStale = true;
+			server.costUpdatedAt = typeof stale.updatedAt === 'string' ? stale.updatedAt : undefined;
+		}
+		if (!disabled && toolChars > 0) {
+			recordServerCost(entryId, serverName, liveChars, tokensOfChars(liveChars), tools.length);
+		}
 		if (!disabled && snapshot.ok && server.transport === 'stdio') {
 			const memory = serverMemoryFootprint(descendants, server);
 			if (memory !== undefined) server.memory = memory;
@@ -277,9 +344,349 @@ async function collectCatalog(ctx) {
 	}
 	servers.sort((a, b) => {
 		if (a.disabled !== b.disabled) return a.disabled ? 1 : -1;
-		return b.tools.length - a.tools.length || a.serverName.localeCompare(b.serverName);
+		return (b.toolTokens ?? 0) - (a.toolTokens ?? 0) || b.tools.length - a.tools.length || a.serverName.localeCompare(b.serverName);
 	});
-	return { servers, memoryProbed: snapshot.ok };
+	if (missingCost.length > 0) scheduleCostBackfill(missingCost);
+	return { servers, memoryProbed: snapshot.ok, toolDefinitions };
+}
+
+/**
+ * Pick the tool set that best represents what a live session actually sends to
+ * the model. The bare registry view (`schemas()` without a scope) only covers
+ * the GLOBAL layer, so agent-preset built-in tools are missing and every MCP
+ * share looks inflated; an agent-scoped view includes them, and the session's
+ * last logged request header is an independent cross-check. The widest candidate
+ * across live agents wins, which is the closest match for "the session you are
+ * looking at".
+ * @param {import('@deepseek-ai/cordis').Context} ctx
+ * @returns {{toolSchemas: Array<object>, basis: {kind: string, agents: number, tools: number}}}
+ */
+function resolveToolContext(ctx) {
+	const agents = typeof ctx.agents?.list === 'function' ? ctx.agents.list() : [];
+	let best;
+	for (const agent of agents) {
+		const candidates = [];
+		try {
+			const schemas = ctx.tools.schemas(agent);
+			if (Array.isArray(schemas) && schemas.length > 0) candidates.push({ tools: schemas, kind: 'agent' });
+		} catch {
+			/* a scope that refuses projection */
+		}
+		try {
+			const header = agent?.session?.requestHeader?.();
+			if (Array.isArray(header?.tools) && header.tools.length > 0) candidates.push({ tools: header.tools, kind: 'header' });
+		} catch {
+			/* no logged header yet */
+		}
+		for (const candidate of candidates) {
+			if (best === undefined || candidate.tools.length > best.tools.length) best = candidate;
+		}
+	}
+	if (best !== undefined) {
+		return { toolSchemas: best.tools, basis: { kind: best.kind, agents: agents.length, tools: best.tools.length } };
+	}
+	const globalSchemas = Array.isArray(ctx.tools?.schemas?.()) ? ctx.tools.schemas() : [];
+	return { toolSchemas: globalSchemas, basis: { kind: 'global', agents: agents.length, tools: globalSchemas.length } };
+}
+
+/** Load the persisted last-enabled cost ledger once; unreadable files start empty. */
+function loadCostCache() {
+	if (costCache !== undefined) return costCache;
+	costCache = { version: COSTS_VERSION, servers: {} };
+	try {
+		const parsed = JSON.parse(fs.readFileSync(COSTS_FILE, 'utf8'));
+		if (isRecord(parsed) && isRecord(parsed.servers)) {
+			costCache = { version: COSTS_VERSION, servers: parsed.servers };
+		}
+	} catch {
+		/* first run, unreadable file, or a read-only environment */
+	}
+	return costCache;
+}
+
+/** Persist the ledger atomically; failures keep the in-memory copy authoritative. */
+function saveCostCache(cache) {
+	try {
+		fs.mkdirSync(path.dirname(COSTS_FILE), { recursive: true });
+		const tmp = COSTS_FILE + '.' + Date.now().toString(16) + '.tmp';
+		fs.writeFileSync(tmp, JSON.stringify(cache, null, 2) + '\n', 'utf8');
+		fs.renameSync(tmp, COSTS_FILE);
+	} catch {
+		/* read-only home or transient disk failure */
+	}
+}
+
+/** Remember one enabled server's cost, writing only when a value actually changed. */
+function recordServerCost(entryId, serverName, toolChars, toolTokens, tools) {
+	if (typeof entryId !== 'string' || entryId === '') return;
+	const cache = loadCostCache();
+	const previous = cache.servers[entryId];
+	if (
+		previous !== undefined &&
+		previous.serverName === serverName &&
+		previous.toolChars === toolChars &&
+		previous.toolTokens === toolTokens &&
+		previous.tools === tools
+	) {
+		return;
+	}
+	cache.servers[entryId] = { serverName, toolChars, toolTokens, tools, updatedAt: new Date().toISOString() };
+	saveCostCache(cache);
+}
+
+/** The last recorded cost of one server, or undefined when it was never enabled here. */
+function lastServerCost(entryId) {
+	if (typeof entryId !== 'string' || entryId === '') return undefined;
+	const cache = loadCostCache();
+	return isRecord(cache.servers[entryId]) ? cache.servers[entryId] : undefined;
+}
+
+//#region 停用成本历史补录
+/**
+ * 面板第一次遇到"停用但从未记账"的 server 时（典型场景：插件升级前就已经关掉
+ * 的 rea），从最近的历史会话日志里回溯它最后一次启用时的工具定义，补进成本
+ * 账本。只跑一次、后台执行、只读会话文件；任何一个环节失败都静默放弃。
+ */
+const SESSIONS_DIR = process.env.DSH_MCP_PANEL_SESSIONS_DIR ?? path.join(os.homedir(), '.dsh', 'sessions');
+const BACKFILL_FILE_LIMIT = 40;
+const BACKFILL_DELAY_MS = 1200;
+const ZSTD_MAGIC = 4247762216;
+let backfillStarted = false;
+
+/** Queue one background backfill pass; the caller never waits for it. */
+function scheduleCostBackfill(targets) {
+	if (backfillStarted || targets.length === 0) return;
+	backfillStarted = true;
+	const timer = setTimeout(() => {
+		try {
+			backfillCosts(targets);
+		} catch {
+			/* best effort: the panel keeps showing — for that row */
+		}
+	}, BACKFILL_DELAY_MS);
+	if (typeof timer.unref === 'function') timer.unref();
+}
+
+/** Walk the session store and return its newest log files. */
+function listSessionLogs(limit) {
+	const files = [];
+	const walk = (dir, depth) => {
+		if (depth > 3) return;
+		let entries;
+		try {
+			entries = fs.readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			const full = path.join(dir, entry.name);
+			if (entry.isDirectory()) {
+				walk(full, depth + 1);
+			} else if (entry.name.endsWith('.jsonl.zstd') || entry.name.endsWith('.jsonl')) {
+				try {
+					files.push({ path: full, mtime: fs.statSync(full).mtimeMs });
+				} catch {
+					/* unreadable entry */
+				}
+			}
+		}
+	};
+	walk(SESSIONS_DIR, 0);
+	return files.sort((a, b) => b.mtime - a.mtime).slice(0, limit);
+}
+
+/** Locate complete Zstandard frames in the concatenated-frame session container. */
+function scanZstdFrames(buffer) {
+	const frames = [];
+	let offset = 0;
+	while (offset < buffer.length) {
+		const start = offset;
+		if (buffer.length - offset < 4 || buffer.readUInt32LE(offset) !== ZSTD_MAGIC) break;
+		offset += 4;
+		if (offset === buffer.length) break;
+		const descriptor = buffer.readUInt8(offset);
+		offset += 1;
+		const contentSizeFlag = descriptor >>> 6;
+		const singleSegment = (descriptor & 32) !== 0;
+		const checksum = (descriptor & 4) !== 0;
+		const dictionaryFlag = descriptor & 3;
+		const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag;
+		const contentSizeBytes = contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : 1 << contentSizeFlag;
+		offset += (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes;
+		for (;;) {
+			if (buffer.length - offset < 3) return frames;
+			const blockHeader = buffer.readUIntLE(offset, 3);
+			offset += 3;
+			const lastBlock = (blockHeader & 1) !== 0;
+			const blockType = (blockHeader >>> 1) & 3;
+			offset += blockType === 1 ? 1 : blockHeader >>> 3;
+			if (lastBlock) break;
+		}
+		if (checksum) offset += 4;
+		frames.push({ start, end: offset });
+	}
+	return frames;
+}
+
+/** Decode one session log (plaintext or multi-frame zstd) to text. */
+function readSessionText(file) {
+	const raw = fs.readFileSync(file);
+	if (file.endsWith('.jsonl')) return raw.toString('utf8');
+	const parts = [];
+	for (const frame of scanZstdFrames(raw)) {
+		try {
+			parts.push(zstdDecompressSync(raw.subarray(frame.start, frame.end)));
+		} catch {
+			/* skip a damaged frame */
+		}
+	}
+	return Buffer.concat(parts).toString('utf8');
+}
+
+/** The tools of the last logged request header in one session log, optionally one that still carried `prefix`. */
+function lastRequestTools(text, prefix) {
+	let last;
+	for (const line of text.split('\n')) {
+		if (line.trim() === '') continue;
+		let record;
+		try {
+			record = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		if (record?.type !== 'request/header' || !Array.isArray(record.data?.header?.tools)) continue;
+		const tools = record.data.header.tools;
+		if (prefix !== undefined && !tools.some((tool) => typeof tool?.name === 'string' && tool.name.startsWith(prefix))) {
+			continue;
+		}
+		last = tools;
+	}
+	return last;
+}
+
+/** For each watched prefix, the LAST header inside one log that still declared it. */
+function lastToolsByPrefix(text, prefixes) {
+	const found = new Map();
+	for (const line of text.split('\n')) {
+		if (line.trim() === '') continue;
+		let record;
+		try {
+			record = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		if (record?.type !== 'request/header' || !Array.isArray(record.data?.header?.tools)) continue;
+		const tools = record.data.header.tools;
+		for (const prefix of prefixes) {
+			if (tools.some((tool) => typeof tool?.name === 'string' && tool.name.startsWith(prefix))) {
+				found.set(prefix, tools);
+			}
+		}
+	}
+	return found;
+}
+
+/** Fill the cost ledger for disabled servers from the newest session that still carried them. */
+function backfillCosts(targets) {
+	const pending = new Map(targets.map((target) => [target.serverName, target]));
+	const prefixes = new Map([...pending.values()].map((target) => [`mcp__${target.serverName}__`, target]));
+	for (const file of listSessionLogs(BACKFILL_FILE_LIMIT)) {
+		if (pending.size === 0) break;
+		let matches;
+		try {
+			matches = lastToolsByPrefix(readSessionText(file.path), [...prefixes.keys()]);
+		} catch {
+			continue;
+		}
+		for (const [prefix, tools] of matches) {
+			const target = prefixes.get(prefix);
+			if (target === undefined || !pending.has(target.serverName)) continue;
+			const owned = tools.filter((tool) => typeof tool?.name === 'string' && tool.name.startsWith(prefix));
+			if (owned.length === 0) continue;
+			const chars = sumChars(owned.map(schemaChars));
+			recordServerCost(target.entryId, target.serverName, chars, tokensOfChars(chars), owned.length);
+			pending.delete(target.serverName);
+		}
+	}
+}
+//#endregion
+
+/** The display name of one MCP Loader entry: `serverName`, else its id, else `mcp`. */
+function serverNameOf(entry) {
+	const options = entry?.options ?? {};
+	const config = isRecord(options.config) ? options.config : {};
+	if (typeof config.serverName === 'string' && config.serverName !== '') return config.serverName;
+	if (typeof options.id === 'string' && options.id !== '') return options.id;
+	return 'mcp';
+}
+
+/** One tool schema's JSON character count; undefined when it cannot be serialized. */
+function schemaChars(schema) {
+	try {
+		return JSON.stringify(schema).length;
+	} catch {
+		return undefined;
+	}
+}
+
+/** `ceil(chars / CHARS_PER_TOKEN)`; undefined when the count is unusable. */
+function tokensOfChars(chars) {
+	if (typeof chars !== 'number' || !Number.isFinite(chars) || chars < 0) return undefined;
+	return Math.ceil(chars / CHARS_PER_TOKEN);
+}
+
+/** Sum defined character counts. */
+function sumChars(list) {
+	let total = 0;
+	for (const value of list) {
+		if (typeof value === 'number' && Number.isFinite(value)) total += value;
+	}
+	return total;
+}
+
+/**
+ * Attribute every registered tool to the MCP server whose `mcp__<name>__`
+ * prefix matches it, longest server name first so two servers whose names
+ * share a prefix never steal each other's tools. Unmatched tools are built-in.
+ * @param {Array<object>} toolSchemas - registered model-facing tool schemas
+ * @param {Array<string>} serverNames - configured MCP server names
+ * @returns {Array<string|undefined>} one group per schema, aligned by index
+ */
+function assignToolGroups(toolSchemas, serverNames) {
+	const prefixes = [...new Set(serverNames)]
+		.filter((name) => typeof name === 'string' && name !== '')
+		.sort((a, b) => b.length - a.length)
+		.map((name) => ({ name, prefix: `mcp__${name}__` }));
+	return toolSchemas.map((tool) => {
+		const toolName = typeof tool?.name === 'string' ? tool.name : '';
+		for (const { name, prefix } of prefixes) {
+			if (toolName.startsWith(prefix)) return name;
+		}
+		return undefined;
+	});
+}
+
+/**
+ * Price the whole registered tool set exactly as the Host's token meter does
+ * (`ceil(chars / 4) + 4`), and split it into the MCP servers' share and the
+ * built-in remainder, so the panel can show what MCP actually costs.
+ * @returns {{chars: number, tokens: number, mcp: {chars: number, tokens: number}, builtin: {chars: number, tokens: number}}|undefined}
+ */
+function toolDefinitionTotals(toolSchemas, schemaCharCounts, groups) {
+	let totalChars;
+	try {
+		totalChars = JSON.stringify(toolSchemas).length;
+	} catch {
+		return undefined;
+	}
+	const mcpChars = sumChars(schemaCharCounts.filter((_, index) => groups[index] !== undefined));
+	const builtinChars = sumChars(schemaCharCounts.filter((_, index) => groups[index] === undefined));
+	return {
+		chars: totalChars,
+		tokens: tokensOfChars(totalChars) + TOOLS_BLOCK_OVERHEAD,
+		mcp: { chars: mcpChars, tokens: tokensOfChars(mcpChars) },
+		builtin: { chars: builtinChars, tokens: tokensOfChars(builtinChars) }
+	};
 }
 
 /** Display-ready reconnect summary; omission falls back to the client bundle's defaults. */
@@ -454,14 +861,25 @@ function sendJson(res, status, data) {
 }
 
 //#region persistence
-/** Locate known cordis patch files across standard dsh profiles. */
-function getPatchFilePaths() {
+/**
+ * Patch-file layers a persisted toggle may have to touch, home layer first.
+ * The home layer (`$DSH_HOME/cordis.patch.yml`) is applied LAST for every
+ * profile, so it owns user-level server inserts; omitting it made a toggle of
+ * such a server survive only in memory and re-enable on the next restart.
+ * @returns {Array<string>} every candidate path, whether or not it exists
+ */
+function patchFileCandidates() {
 	const home = os.homedir();
-	const candidates = [
+	return [
+		path.join(home, '.dsh', 'cordis.patch.yml'),
 		path.join(home, '.dsh', 'profiles', 'web', 'cordis.patch.yml'),
 		path.join(home, '.dsh', 'profiles', 'desktop', 'cordis.patch.yml')
 	];
-	return candidates.filter((p) => {
+}
+
+/** Locate existing cordis patch files across every layer a dsh install may use. */
+function getPatchFilePaths() {
+	return patchFileCandidates().filter((p) => {
 		try {
 			return fs.existsSync(p);
 		} catch {
@@ -545,10 +963,27 @@ function persistEntryDisabled(entryId, disabled) {
 
 /** Exposed for offline tests; not part of the bundle contract. */
 export const __test = {
+	collectCatalog,
+	resolveToolContext,
+	loadCostCache,
+	recordServerCost,
+	lastServerCost,
+	backfillCosts,
+	scanZstdFrames,
+	lastRequestTools,
+	lastToolsByPrefix,
+	readSessionText,
 	descendantProcesses,
 	serverMemoryFootprint,
 	basenameOf,
+	serverNameOf,
+	schemaChars,
+	tokensOfChars,
+	sumChars,
+	assignToolGroups,
+	toolDefinitionTotals,
 	updateYamlEntryDisabled,
+	patchFileCandidates,
 	findMcpEntry,
 	sameOrigin
 };

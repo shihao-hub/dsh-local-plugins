@@ -1,5 +1,6 @@
 {
   "meta": {
-    "title": "MCP panel"
+    "title": "MCP panel",
+    "description": "Sidebar MCP panel listing configured MCP servers, their transports, the tools they contribute to sessions, and the context tokens each server's tool definitions cost."
   }
 }

@@ -70,6 +70,9 @@
         '.mcpx_toolName{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;font-weight:600;flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
         '.mcpx_toolDesc{color:var(--dsw-alias-label-tertiary);font-size:11.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
         '.mcpx_toolParams{color:var(--dsw-alias-label-caption,var(--dsw-alias-label-tertiary));font-size:10px;border:.5px solid var(--dsw-alias-border-l2);border-radius:4px;padding:0 4px;flex:none;font-variant-numeric:tabular-nums}',
+        '.mcpx_toolTokens{color:var(--dsw-alias-label-tertiary);font-size:10px;border:.5px solid var(--dsw-alias-border-l2);border-radius:4px;padding:0 4px;flex:none;font-variant-numeric:tabular-nums}',
+        '.mcpx_ctxWarn{color:var(--dsw-alias-state-warn-primary)}',
+        '.mcpx_ctxHot{color:var(--dsw-alias-state-error-primary)}',
         '.mcpx_meta{display:flex;flex-wrap:wrap;gap:4px 10px;color:var(--dsw-alias-label-tertiary);font-size:10.5px}',
         '.mcpx_metaItem{white-space:nowrap}',
         '.mcpx_metaKey{color:var(--dsw-alias-label-caption,var(--dsw-alias-label-tertiary));margin-right:3px}',
@@ -117,7 +120,7 @@
         'paramsShort': '\u53c2',
         'footer': 'MCP \u00b7 Model Context Protocol \u2014 \u5de5\u5177\u4ee5 mcp__\u670d\u52a1\u5668__\u540d\u79f0 \u6ce8\u5165\u4f1a\u8bdd',
         'statusDisabled': '\u5df2\u505c\u7528',
-        'disabledHint': '\u8be5\u670d\u52a1\u5df2\u88ab\u624b\u52a8\u505c\u7528\uff0c\u5b50\u8fdb\u7a0b\u5df2\u9500\u6bc1\uff0c\u4e0d\u5360\u7528\u7cfb\u7edf\u5185\u5b58\u3002',
+        'disabledHint': '\u8be5\u670d\u52a1\u5df2\u88ab\u624b\u52a8\u505c\u7528\uff0c\u5b50\u8fdb\u7a0b\u5df2\u9500\u6bc1\uff0c\u4e0d\u5360\u7528\u7cfb\u7edf\u5185\u5b58\uff0c\u4e5f\u4e0d\u5411\u4f1a\u8bdd\u6ce8\u5165\u5de5\u5177\u5b9a\u4e49\u3002',
         'restartServer': '\u70ed\u91cd\u542f\u6b64 MCP \u670d\u52a1',
         'restartingServer': '\u6b63\u5728\u91cd\u542f\u6b64\u670d\u52a1\u2026',
         'restartedServer': '\u670d\u52a1\u5df2\u5c31\u5730\u91cd\u542f',
@@ -125,7 +128,16 @@
         'toggleDisable': '\u505c\u7528\u6b64\u670d\u52a1',
         'appRestartLabel': '\u91cd\u542f\u5e94\u7528\u4e0e Host',
         'appRestartConfirm': '\u786e\u5b9a\u8981\u5e73\u6ed1\u91cd\u542f DeepSeek Harness \u5e94\u7528\u4e0e Host \u5417\uff1f',
-        'appRestarting': '\u6b63\u5728\u91cd\u542f\uff0c\u8bf7\u7a0d\u5019\u2026'
+        'appRestarting': '\u6b63\u5728\u91cd\u542f\uff0c\u8bf7\u7a0d\u5019\u2026',
+        'statContext': '\u5de5\u5177\u4e0a\u4e0b\u6587',
+        'metaContext': '\u4e0a\u4e0b\u6587',
+        'ctxDetail': '\u5168\u90e8\u5de5\u5177\u5b9a\u4e49',
+        'ctxMcp': 'MCP',
+        'ctxBuiltin': '\u5185\u7f6e',
+        'ctxHint': '\u6309 4 \u5b57\u7b26/token \u4f30\u7b97\uff0c\u4e0e\u5bbf\u4e3b\u4e0a\u4e0b\u6587\u8ba1\u91cf\u540c\u53e3\u5f84',
+        'ctxChars': '\u5b57\u7b26',
+        'ctxStale': '\u505c\u7528\u524d',
+        'ctxBasis': '\u53e3\u5f84\uff1a\u5f53\u524d\u4f1a\u8bdd'
       };
 
       /** English dictionary, checked complete against the zh key set. */
@@ -162,7 +174,7 @@
         'paramsShort': 'p',
         'footer': 'MCP \u00b7 Model Context Protocol \u2014 tools join sessions as mcp__server__name',
         'statusDisabled': 'Disabled',
-        'disabledHint': 'This server is manually disabled, child processes terminated and consumes no system memory.',
+        'disabledHint': 'This server is manually disabled, child processes terminated, consumes no system memory and injects no tool definitions.',
         'restartServer': 'Hot-restart this MCP server',
         'restartingServer': 'Restarting server\u2026',
         'restartedServer': 'Server restarted in-place',
@@ -170,7 +182,16 @@
         'toggleDisable': 'Disable server',
         'appRestartLabel': 'Restart App & Host',
         'appRestartConfirm': 'Restart DeepSeek Harness app and host smoothly?',
-        'appRestarting': 'Restarting, please wait\u2026'
+        'appRestarting': 'Restarting, please wait\u2026',
+        'statContext': 'Tools context',
+        'metaContext': 'Context',
+        'ctxDetail': 'All tool definitions',
+        'ctxMcp': 'MCP',
+        'ctxBuiltin': 'Built-in',
+        'ctxHint': 'Estimated at 4 chars/token, same basis as the Host context meter',
+        'ctxChars': 'chars',
+        'ctxStale': 'last enabled',
+        'ctxBasis': 'basis: live session'
       };
 
       //#region data access
@@ -233,6 +254,77 @@
         if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
         if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+      }
+
+      /** Compact token count: raw below 1K, one decimal for K and M. */
+      function formatTokens(tokens) {
+        if (typeof tokens !== 'number' || !Number.isFinite(tokens) || tokens < 0) return undefined;
+        if (tokens < 1000) return String(Math.round(tokens));
+        if (tokens < 1000000) return (tokens / 1000).toFixed(1) + 'K';
+        return (tokens / 1000000).toFixed(1) + 'M';
+      }
+
+      /** Share of `part` in `total`, whole percent at or above 10%, otherwise one decimal. */
+      function percentOf(part, total) {
+        if (typeof part !== 'number' || typeof total !== 'number') return undefined;
+        if (!Number.isFinite(part) || !Number.isFinite(total) || part < 0 || total <= 0) return undefined;
+        const percent = (part / total) * 100;
+        if (percent > 0 && percent < 1) return '<1%';
+        return (percent >= 10 ? Math.round(percent) : Math.round(percent * 10) / 10) + '%';
+      }
+
+      /** Tone class suffix for one share of the whole tool-definition cost. */
+      function contextTone(part, total) {
+        if (typeof part !== 'number' || typeof total !== 'number' || total <= 0) return '';
+        const share = part / total;
+        if (share >= 0.5) return ' mcpx_ctxHot';
+        if (share >= 0.25) return ' mcpx_ctxWarn';
+        return '';
+      }
+
+      /** The header stat only warns when MCP declarations dominate the whole tool budget. */
+      function definitionTone(definitions) {
+        if (definitions === undefined || definitions.mcp === undefined) return '';
+        if (typeof definitions.tokens !== 'number' || definitions.tokens <= 0) return '';
+        return definitions.mcp.tokens / definitions.tokens >= 0.8 ? ' mcpx_ctxWarn' : '';
+      }
+
+      /** Tooltip for the header stats card: the whole cost with its MCP/built-in split. */
+      function definitionTooltip(definitions, t) {
+        if (definitions === undefined || typeof definitions.tokens !== 'number') return undefined;
+        const parts = [t('ctxDetail') + ' \u2248' + formatTokens(definitions.tokens) + ' tokens'];
+        if (definitions.mcp !== undefined) parts.push(t('ctxMcp') + ' \u2248' + formatTokens(definitions.mcp.tokens));
+        if (definitions.builtin !== undefined) parts.push(t('ctxBuiltin') + ' \u2248' + formatTokens(definitions.builtin.tokens));
+        if (definitions.basis !== undefined && typeof definitions.basis.tools === 'number') {
+          parts.push(t('ctxBasis') + ' (' + definitions.basis.tools + ' ' + t('statTools') + ')');
+        }
+        parts.push(t('ctxHint'));
+        return parts.join(' \u00b7 ');
+      }
+
+      /** Tooltip for one server's context cost: exact characters, tokens and share (or the last-enabled record). */
+      function serverContextTooltip(server, total, t) {
+        const tokens = formatTokens(server.toolTokens);
+        if (tokens === undefined) return undefined;
+        const detail =
+          typeof server.toolChars === 'number'
+            ? server.toolChars.toLocaleString('en-US') + ' ' + t('ctxChars') + ' \u2248 ' + tokens + ' tokens'
+            : '\u2248 ' + tokens + ' tokens';
+        if (server.costStale === true) {
+          const when = typeof server.costUpdatedAt === 'string' ? new Date(server.costUpdatedAt).toLocaleString() : undefined;
+          return t('ctxStale') + (when !== undefined ? ' (' + when + ')' : '') + ' \u00b7 ' + detail;
+        }
+        const percent = percentOf(server.toolTokens, total);
+        return percent === undefined ? detail : detail + ' \u00b7 ' + percent;
+      }
+
+      /** Tooltip for one tool row: exact characters and tokens of this declaration. */
+      function toolContextTooltip(tool, t) {
+        const tokens = formatTokens(tool.tokens);
+        if (tokens === undefined) return undefined;
+        return typeof tool.chars === 'number'
+          ? tool.chars.toLocaleString('en-US') + ' ' + t('ctxChars') + ' \u2248 ' + tokens + ' tokens'
+          : '\u2248 ' + tokens + ' tokens';
       }
 
       function matchesQuery(server, query) {
@@ -405,6 +497,23 @@
         };
 
         const meta = [];
+        const definitionTokens = typeof props.definitionTokens === 'number' ? props.definitionTokens : undefined;
+        const stale = server.costStale === true;
+        const hasCost = typeof server.toolTokens === 'number' && server.toolTokens > 0;
+        const contextTokens = formatTokens(hasCost ? server.toolTokens : undefined);
+        const contextPercent = stale ? undefined : percentOf(server.toolTokens, definitionTokens);
+        meta.push({
+          key: t('metaContext'),
+          value:
+            contextTokens === undefined
+              ? '\u2014'
+              : '\u2248' +
+                contextTokens +
+                (contextPercent !== undefined ? ' \u00b7 ' + contextPercent : '') +
+                (stale ? ' \u00b7 ' + t('ctxStale') : ''),
+          title: hasCost ? serverContextTooltip(server, definitionTokens, t) : undefined,
+          tone: stale ? '' : contextTone(server.toolTokens, definitionTokens)
+        });
         if (memoryText !== undefined) {
           meta.push({
             key: t('metaMemory'),
@@ -507,6 +616,13 @@
                           h('span', { className: 'mcpx_toolDesc', title: tool.description || undefined }, tool.description),
                           tool.params > 0
                             ? h('span', { className: 'mcpx_toolParams', title: tool.params + ' params' }, tool.params + t('paramsShort'))
+                            : null,
+                          typeof tool.tokens === 'number' && tool.tokens > 0
+                            ? h(
+                                'span',
+                                { className: 'mcpx_toolTokens', title: toolContextTooltip(tool, t) },
+                                '\u2248' + formatTokens(tool.tokens)
+                              )
                             : null
                         )
                       )
@@ -522,9 +638,9 @@
             meta.map((item, index) =>
               h(
                 'span',
-                { className: 'mcpx_metaItem', key: index },
+                { className: 'mcpx_metaItem', key: index, title: item.title },
                 item.key !== '' ? h('span', { className: 'mcpx_metaKey' }, item.key) : null,
-                h('span', { className: 'mcpx_metaValue' }, item.value)
+                h('span', { className: 'mcpx_metaValue' + (item.tone ?? '') }, item.value)
               )
             )
           )
@@ -624,6 +740,7 @@
         }, [t]);
 
         const servers = state.data !== undefined ? state.data.servers : [];
+        const definitions = state.data !== undefined ? state.data.toolDefinitions : undefined;
         const visible = servers.filter((server) => matchesQuery(server, query));
         const totalTools = servers.reduce((sum, server) => sum + server.tools.length, 0);
         const onlineCount = servers.filter((server) => !server.disabled && server.tools.length > 0).length;
@@ -662,6 +779,7 @@
               server,
               tools: filterServerTools(server, query),
               searching,
+              definitionTokens: definitions?.tokens,
               busyGlobal: busy,
               onToggle: handleToggle,
               onRestart: handleRestart,
@@ -718,7 +836,19 @@
                   { className: 'mcpx_stats' },
                   h('div', { className: 'mcpx_stat' }, h('div', { className: 'mcpx_statValue' }, String(servers.length)), h('div', { className: 'mcpx_statLabel' }, t('statServers'))),
                   h('div', { className: 'mcpx_stat' }, h('div', { className: 'mcpx_statValue' }, String(onlineCount)), h('div', { className: 'mcpx_statLabel' }, t('statOnline'))),
-                  h('div', { className: 'mcpx_stat' }, h('div', { className: 'mcpx_statValue' }, String(totalTools)), h('div', { className: 'mcpx_statLabel' }, t('statTools')))
+                  h('div', { className: 'mcpx_stat' }, h('div', { className: 'mcpx_statValue' }, String(totalTools)), h('div', { className: 'mcpx_statLabel' }, t('statTools'))),
+                  definitions !== undefined && typeof definitions.tokens === 'number'
+                    ? h(
+                        'div',
+                        { className: 'mcpx_stat', title: definitionTooltip(definitions, t) },
+                        h(
+                          'div',
+                          { className: 'mcpx_statValue' + definitionTone(definitions) },
+                          formatTokens(definitions.tokens)
+                        ),
+                        h('div', { className: 'mcpx_statLabel' }, t('statContext'))
+                      )
+                    : null
                 )
               : null,
             showSearch
@@ -810,6 +940,11 @@
           endpointOf,
           shortToolName,
           formatBytes,
+          formatTokens,
+          percentOf,
+          contextTone,
+          definitionTone,
+          serverContextTooltip,
           matchesQuery,
           filterServerTools,
           loadCatalog
