@@ -6,7 +6,7 @@
 // (PEP 723 header, zero third-party deps), so no package resolution is needed:
 // this launcher resolves a python.exe directly and spawns it, collapsing the
 // chain from `node -> uv -> python -> python` to `node -> python`.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,8 +61,29 @@ child.on('exit', (code, signal) => {
   process.exit(code ?? 1);
 });
 
-for (const signal of ['SIGINT', 'SIGTERM']) {
+function killTree(pid) {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    // Windows 上 child.kill() 只终止直接子进程，agy 派生的 powershell/python
+    // 孙进程会逃逸；taskkill /T /F 连坐回收。它与 server/win_job.py 的
+    // Job Object 形成两层保护（Job 兜底崩溃，taskkill 即时响应信号）。
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    return;
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    /* already gone */
+  }
+}
+
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(signal, () => {
-    child.kill();
+    killTree(child.pid);
+    process.exit(0);
   });
 }
+
+process.on('exit', () => {
+  if (child.exitCode === null) killTree(child.pid);
+});

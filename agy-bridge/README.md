@@ -39,8 +39,14 @@ DSH 模型 ──► mcp__agy__research (MCP 工具)
 
 | 工具名（DSH 内完整名） | 说明 |
 | :--- | :--- |
-| `mcp__agy__research` | 只读委托调研/审计。参数：`prompt`（必填）、`cwd`（工作目录，默认桥接器目录）、`model`、`effort`、`add_dir`、`timeout_seconds` |
+| `mcp__agy__research` | 只读委托调研/审计。参数：`prompt`（必填，≤24000 字符）、`cwd`（**必填**，要审计的绝对路径）、`model`、`effort`、`add_dir`、`timeout_seconds` |
 | `mcp__agy__list_models` | 列出 agy 可用模型（本地调用，零额度） |
+
+> `prompt` 上限 24000 字符：这是 Windows 命令行 32767 字符硬限预留余量后的安全值（再大会
+> 在 spawn 时抛 `WinError 206`）。需要喂更大材料时，把它写到磁盘再用 `cwd` / `add_dir`
+> 指给 agy，而不是塞进 prompt。
+>
+> `cwd` 必填：省略会让 agy 在桥接器自身目录里空转（旧版的静默回退已移除）。
 
 ## 后台作业入口（`bin/agy-run.mjs`，推荐用于宽面调研）
 
@@ -65,6 +71,17 @@ node D:\Users\dsh-local-plugins\agy-bridge\bin\agy-run.mjs `
 | 退出码 | `0` 成功 / `2` 超时 / `3` agy 失败 / `4` 参数环境错误 / `5` 命中 plan-and-wait |
 
 退出码与 `planWait` 行可直接作为调用方（主 Agent 或脚本）的判定依据。
+
+## 进程治理与并发（两层保护）
+
+| 层 | 机制 | 覆盖场景 |
+| :--- | :--- | :--- |
+| 内核层 | `server/win_job.py` 的 Job Object（`KILL_ON_JOB_CLOSE`） | 桥接器进程崩溃/被杀时，内核连坐终止其全部 agy 子树 |
+| 即时层 | `taskkill /PID <pid> /T /F` | 单次调用超时、或收到 `notifications/cancelled` 时立即回收该棵树 |
+
+主线程只负责读帧，`tools/call` 交给 daemon 工作线程执行：一次长 `research` 不再阻塞
+`ping` / `tools/list`，`notifications/cancelled` 会被转成 `cancelled` 错误响应并杀掉对应
+进程树。续跑（plan-and-wait 兜底）只使用首轮的剩余预算，最坏耗时不超 `timeout_seconds`。
 
 ## 文件结构
 
@@ -138,3 +155,6 @@ python D:\Users\dsh-local-plugins\agy-bridge\server\agy_bridge_server.py
 | `agy_failed` | 文本里带 agy stderr 摘要；常见为网络/配额/登录态问题 |
 | 工具调用报 `Request timed out` | 客户端 `config.toolCallTimeoutMs` 到点（默认 60s）先于桥接器砍断；调大到 `3700000` 并重启 DSH |
 | 工具调用超时（桥接器侧） | 文本里带 `durationS` 与 agy stderr 摘要；说明是 agy 真跑超了，可提高 `timeout_seconds` 或拆窄 prompt |
+| `prompt_too_large` | prompt 超过 24000 字符；把材料落盘后用 `cwd`/`add_dir` 指向它，或拆任务 |
+| `invalid_cwd` | `cwd` 缺失或不是已存在的目录；传要审计的绝对路径 |
+| `cancelled` | 客户端发过 `notifications/cancelled`；对应 agy 进程树已被回收 |

@@ -42,6 +42,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+try:  # 同目录模块；非 Windows 下 win_job 自身会降级为 NullJob。
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import win_job  # noqa: E402
+except ImportError:  # pragma: no cover - 缺失时退回逐次 taskkill /T /F 保护
+    win_job = None  # type: ignore[assignment]
+
 # ---------------------------------------------------------------------------
 # constants
 # ---------------------------------------------------------------------------
@@ -54,7 +60,12 @@ READ_ONLY_FLAGS = ["--sandbox", "--mode", "plan"]
 JSON_FLAG = "--output-format"
 DEFAULT_TIMEOUT_S = 600
 MAX_TIMEOUT_S = 3600
-MAX_PROMPT_CHARS = 200_000
+# Windows CreateProcessW 对整条命令行（含全部参数）有 32767 字符的硬上限；
+# 超过时 spawn 抛 WinError 206。这里取一个留足余量的安全值，而不是声明一个
+# 根本发不出去的 200_000（见 plans/02-agy-mcp-审计报告.md H3）。
+MAX_PROMPT_CHARS = 24_000
+# 二次续跑的最小剩余预算；不足时宁可放弃续跑也不放大总时长。
+MIN_CONTINUATION_S = 30
 
 # 非交互守卫段。没有它时，agy 在 plan 模式下会把委托理解成「先出计划、等人点 Proceed」，
 # 而非交互的 print 调用根本没有人能点，结果就是返回一份计划文档而不是答案。
@@ -141,7 +152,64 @@ def find_agy() -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def run_agy(args: list[str], cwd: str, timeout_s: int) -> dict[str, Any]:
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """终止一个子进程及其全部后代。
+
+    Windows 上没有可靠的进程组信号：Popen.kill() 只杀直接子进程，agy 派生的
+    powershell/python 孙进程会逃逸成孤儿。taskkill /T /F 是唯一稳妥的连坐方式；
+    它与 win_job 的 kill-on-close 构成两层保护（后者兜底崩溃场景，前者即时响应
+    超时与取消）。
+    """
+    if proc.poll() is not None:
+        return
+    if IS_WINDOWS:
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=15,
+                creationflags=CREATE_NO_WINDOW,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+class InflightTask:
+    """一次在飞的 tools/call，让取消通知能拿到子进程并连坐终止。"""
+
+    __slots__ = ("_lock", "_proc", "_cancelled")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._proc: Any = None
+        self._cancelled = False
+
+    @property
+    def cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
+
+    def attach(self, proc: Any) -> None:
+        """登记刚 spawn 的子进程；若取消已先到，立即补杀。"""
+        with self._lock:
+            self._proc = proc
+            cancelled = self._cancelled
+        if cancelled:
+            _kill_tree(proc)
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled = True
+            proc = self._proc
+        if proc is not None:
+            _kill_tree(proc)
+
+
+def run_agy(args: list[str], cwd: str, timeout_s: int, task: InflightTask | None = None) -> dict[str, Any]:
     """Run one agy invocation and return captured output plus timing.
 
     Raises FileNotFoundError when the binary vanished between probe and run.
@@ -152,39 +220,60 @@ def run_agy(args: list[str], cwd: str, timeout_s: int) -> dict[str, Any]:
 
     started = time.monotonic()
     creationflags = CREATE_NO_WINDOW if IS_WINDOWS else 0
+    proc = subprocess.Popen(
+        [agy, *args],
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=creationflags,
+    )
+    if task is not None:
+        task.attach(proc)
+
+    cancelled = False
     try:
-        proc = subprocess.run(
-            [agy, *args],
-            cwd=cwd,
-            capture_output=True,
-            timeout=timeout_s,
-            creationflags=creationflags,
-        )
-    except subprocess.TimeoutExpired as exc:
-        elapsed = time.monotonic() - started
-        out = _decode(exc.stdout)
-        err = _decode(exc.stderr)
+        out, err = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            out, err = proc.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            out, err = b"", b""
+        cancelled = bool(task is not None and task.cancelled)
         return {
-            "stdout": out,
-            "stderr": err,
+            "stdout": _decode(out),
+            "stderr": _decode(err),
             "exitCode": None,
             "timedOut": True,
-            "durationS": round(elapsed, 2),
+            "cancelled": cancelled,
+            "durationS": round(time.monotonic() - started, 2),
         }
-    elapsed = time.monotonic() - started
+    cancelled = bool(task is not None and task.cancelled)
     return {
-        "stdout": _decode(proc.stdout),
-        "stderr": _decode(proc.stderr),
+        "stdout": _decode(out),
+        "stderr": _decode(err),
         "exitCode": proc.returncode,
         "timedOut": False,
-        "durationS": round(elapsed, 2),
+        "cancelled": cancelled,
+        "durationS": round(time.monotonic() - started, 2),
     }
 
 
 def _decode(raw: Any) -> str:
+    """Decode child output; UTF-8 first, then the local ANSI code page (GBK).
+
+    Windows 上部分子进程（尤其是 cmd/PowerShell 错误回显）仍用 ANSI 代码页
+    输出；只按 UTF-8 解码会把中文字符替换成 U+FFFD，进而让 PLAN_WAIT 正
+    则失配、续跑机制静默失效。
+    """
     if raw is None:
         return ""
     if isinstance(raw, bytes):
+        for encoding in ("utf-8", "gbk"):
+            try:
+                return raw.decode(encoding)
+            except UnicodeDecodeError:
+                continue
         return raw.decode("utf-8", errors="replace")
     return str(raw)
 
@@ -302,21 +391,33 @@ def _normalize_extra_args(raw: Any) -> list[str]:
     return [str(item) for item in raw if str(item).strip()]
 
 
-def tool_research(args: dict[str, Any]) -> dict[str, Any]:
+def tool_research(args: dict[str, Any], task: InflightTask | None = None) -> dict[str, Any]:
     """Read-only research/audit delegation to agy (sandbox + plan mode pinned)."""
+    if task is not None and task.cancelled:
+        return _error_result("cancelled", "request cancelled by the client")
     prompt = str(args.get("prompt") or "").strip()
     if not prompt:
         return _error_result("invalid_arguments", "prompt is required and must be non-empty")
     if len(prompt) > MAX_PROMPT_CHARS:
         return _error_result(
             "prompt_too_large",
-            f"prompt exceeds {MAX_PROMPT_CHARS} characters; split the task",
+            (
+                f"prompt exceeds {MAX_PROMPT_CHARS} characters (Windows command-line limit). "
+                "Write the material to a file and point cwd/add_dir at it, or split the task."
+            ),
         )
 
     cwd, cwd_error = _normalize_cwd(args.get("cwd"))
     if cwd_error:
         return _error_result("invalid_cwd", cwd_error)
-    effective_cwd = cwd or str(Path(__file__).resolve().parent)
+    if not cwd:
+        # 回退到桥接器自身目录会让 agy 在插件源码树里做无意义检索（审计报告 H4），
+        # 因此 cwd 改为必填，并在错误里给出可操作的指引。
+        return _error_result(
+            "invalid_cwd",
+            "cwd is required: pass the absolute path of the repository/directory agy should inspect",
+        )
+    effective_cwd = cwd
 
     try:
         timeout_s = int(args.get("timeout_seconds") or DEFAULT_TIMEOUT_S)
@@ -361,29 +462,39 @@ def tool_research(args: dict[str, Any]) -> dict[str, Any]:
         and looks_like_plan_wait(text)
         and conversation_id is not None
         and MAX_CONTINUATIONS > 0
+        and not (task is not None and task.cancelled)
     ):
-        log(f"plan-and-wait detected; resuming conversation={conversation_id}")
-        try:
-            resumed = run_agy(
-                ["-p", RESUME_PROMPT, *base_args, "--conversation", conversation_id],
-                cwd=effective_cwd,
-                timeout_s=timeout_s,
-            )
-        except (FileNotFoundError, OSError) as exc:
-            log(f"continuation spawn failed: {exc}")
-            resumed = None
-        if resumed is not None and resumed["exitCode"] == 0:
-            resumed_text = extract_response_text(resumed["stdout"])
-            if resumed_text and not looks_like_plan_wait(resumed_text):
-                text = resumed_text
-                meta = {
-                    **resumed,
-                    "durationS": round(meta["durationS"] + resumed["durationS"], 2),
-                }
-                exit_code = 0
-                continuations = 1
-        if continuations == 0:
-            log("continuation did not yield a final deliverable; keeping first-round text")
+        # 续跑必须复用首轮**剩余**预算，否则单次调用的最坏耗时会被放大到 2×timeout_s。
+        remaining = timeout_s - int(meta.get("durationS") or 0)
+        if remaining < MIN_CONTINUATION_S:
+            log(f"skipping continuation: only {remaining}s of the {timeout_s}s budget left")
+        else:
+            log(f"plan-and-wait detected; resuming conversation={conversation_id} (remaining={remaining}s)")
+            try:
+                resumed = run_agy(
+                    ["-p", RESUME_PROMPT, *base_args, "--conversation", conversation_id],
+                    cwd=effective_cwd,
+                    timeout_s=remaining,
+                    task=task,
+                )
+            except (FileNotFoundError, OSError) as exc:
+                log(f"continuation spawn failed: {exc}")
+                resumed = None
+            if resumed is not None and resumed["exitCode"] == 0:
+                resumed_text = extract_response_text(resumed["stdout"])
+                if resumed_text and not looks_like_plan_wait(resumed_text):
+                    text = resumed_text
+                    meta = {
+                        **resumed,
+                        "durationS": round(meta["durationS"] + resumed["durationS"], 2),
+                    }
+                    exit_code = 0
+                    continuations = 1
+            if continuations == 0:
+                log("continuation did not yield a final deliverable; keeping first-round text")
+
+    if task is not None and task.cancelled:
+        return _error_result("cancelled", "request cancelled by the client")
 
     plan_wait = looks_like_plan_wait(text)
     context: dict[str, Any] = {
@@ -486,13 +597,18 @@ TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "The full task, question, or audit request for agy.",
+                    "description": (
+                        "The full task, question, or audit request for agy. "
+                        f"Max {MAX_PROMPT_CHARS} characters (Windows command-line limit); "
+                        "for larger inputs write the material to disk and reference it via cwd/add_dir."
+                    ),
                 },
                 "cwd": {
                     "type": "string",
                     "description": (
                         "Absolute working directory for the agy run (its workspace root "
-                        "for file reading). Defaults to the bridge's directory."
+                        "for file reading). Required: always pass the repository or "
+                        "directory agy should inspect."
                     ),
                 },
                 "model": {
@@ -517,7 +633,7 @@ TOOLS: list[dict[str, Any]] = [
                     ),
                 },
             },
-            "required": ["prompt"],
+            "required": ["prompt", "cwd"],
         },
     },
     {
@@ -627,6 +743,70 @@ def handle_request(message: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+_inflight: dict[str, InflightTask] = {}
+_inflight_lock = threading.Lock()
+
+
+def _call_tool(name: str, arguments: dict[str, Any], task: InflightTask) -> dict[str, Any]:
+    if name == "research":
+        return tool_research(arguments, task)
+    handler = TOOL_HANDLERS.get(name)
+    if handler is None:
+        return _error_result("invalid_arguments", f"unknown tool: {name}")
+    return handler(arguments)
+
+
+def _dispatch_tool_call(message: dict[str, Any]) -> None:
+    """Run one tools/call on a worker thread so the stdin read loop never blocks.
+
+    原先 tools/call 在主循环里同步执行，一次长 research 会冻结整个服务端
+    （其间连 ping 都无法响应），且无法接收取消通知。现在主循环只负责读帧，
+    执行放到 daemon 线程，响应仍由 worker 写出（send_message 自带 stdout 锁）。
+    """
+    request_id = message.get("id")
+    key = str(request_id)
+    params = message.get("params") or {}
+    name = str(params.get("name") or "")
+    arguments = params.get("arguments") or {}
+    if not isinstance(arguments, dict):
+        arguments = {}
+
+    task = InflightTask()
+    with _inflight_lock:
+        _inflight[key] = task
+
+    def work() -> None:
+        try:
+            result = _call_tool(name, arguments, task)
+        except Exception as exc:  # pragma: no cover - defensive
+            result = _error_result("bridge_internal_error", f"{type(exc).__name__}: {exc}")
+        finally:
+            with _inflight_lock:
+                _inflight.pop(key, None)
+        send_message({"jsonrpc": "2.0", "id": request_id, "result": result})
+
+    threading.Thread(target=work, name=f"agy-tool-{key}", daemon=True).start()
+
+
+def _handle_cancel(params: dict[str, Any]) -> None:
+    """Handle notifications/cancelled: kill the corresponding agy process tree."""
+    key = str(params.get("requestId") or "")
+    with _inflight_lock:
+        task = _inflight.get(key)
+    if task is None:
+        log(f"cancel ignored: no inflight request {key!r}")
+        return
+    log(f"cancel requested for request {key}")
+    task.cancel()
+
+
+def _cancel_all() -> None:
+    with _inflight_lock:
+        tasks = list(_inflight.values())
+    for task in tasks:
+        task.cancel()
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         try:
@@ -635,23 +815,42 @@ def main() -> int:
         except Exception:
             pass
 
+    # 在启动任何子进程之前把持有者自己放进 Job Object：此后派生的所有 agy
+    # 子树在创建时刻就带成员资格，持有者一死由内核连坐终止（无竞态）。
+    containment = win_job.create_containment_job() if win_job is not None else None
+    if containment is not None and containment.available:
+        log(f"win_job containment active (kill-on-close), pid={os.getpid()}")
+    else:
+        log("win_job containment unavailable; relying on taskkill /T /F per run")
+
     agy = find_agy()
     log(f"starting {SERVER_NAME} {SERVER_VERSION}; agy={'found' if agy else 'NOT FOUND'}")
 
     stream = sys.stdin.buffer
-    while True:
-        body = read_message(stream)
-        if body is None:
-            log("stdin closed; shutting down")
-            return 0
-        try:
-            message = json.loads(body.decode("utf-8"))
-        except Exception as exc:
-            log(f"invalid frame: {exc}")
-            continue
-        response = handle_request(message)
-        if response is not None:
-            send_message(response)
+    try:
+        while True:
+            body = read_message(stream)
+            if body is None:
+                log("stdin closed; shutting down")
+                return 0
+            try:
+                message = json.loads(body.decode("utf-8"))
+            except Exception as exc:
+                log(f"invalid frame: {exc}")
+                continue
+            method = message.get("method")
+            if method == "tools/call":
+                _dispatch_tool_call(message)
+                continue
+            if method == "notifications/cancelled":
+                _handle_cancel(message.get("params") or {})
+                continue
+            response = handle_request(message)
+            if response is not None:
+                send_message(response)
+    finally:
+        _cancel_all()
+        # 不主动 close containment：进程退出时内核按 kill-on-close 连坐清理。
 
 
 if __name__ == "__main__":
